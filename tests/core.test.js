@@ -1,4 +1,5 @@
 'use strict';
+process.env.TZ = 'Europe/Madrid'; // las horas esperadas son las de la península
 const assert = require('assert');
 const Org = require('../src/core.js');
 const { makeMsg } = require('./cfb_writer.js');
@@ -170,6 +171,66 @@ test('campos de un elemento creado desde un correo', () => {
   const f = Org.fromEmail(e, 'esperar');
   assert.strictEqual(f.title, 'Datos'); assert.strictEqual(f.person, 'Ana'); assert.strictEqual(f.since, '2026-10-28');
   assert.strictEqual(Org.fromEmail({ fromAddr: 'z@x.es' }, 'responder').title, '(sin asunto)');
+});
+
+console.log('Citas del calendario');
+test('cita de Outlook (.msg) con propiedades con nombre', () => {
+  const e = Org.parseEmailFile('cita.msg', makeMsg({
+    subject: 'Reunión de seguimiento', senderName: 'Ana Ruiz', body: 'Orden del día…',
+    appointment: { start: new Date('2026-11-05T09:00:00Z'), end: new Date('2026-11-05T11:30:00Z'), location: 'Sala 3' }
+  }));
+  assert.deepStrictEqual(e.event, { start: '2026-11-05T10:00', end: '2026-11-05T12:30', allDay: false, place: 'Sala 3' });
+  const f = Org.fromEvent(e);
+  assert.strictEqual(f.kind, 'evento'); assert.strictEqual(f.evType, 'reunion'); assert.strictEqual(f.title, 'Reunión de seguimiento');
+  assert.strictEqual(f.start, '2026-11-05T10:00'); assert.strictEqual(f.place, 'Sala 3');
+});
+test('cita de todo el día de varios días: fin inclusivo y tipo curso', () => {
+  const e = Org.parseMsg(makeMsg({
+    subject: 'Curso de formación QGIS',
+    appointment: { start: new Date('2026-11-09T23:00:00Z'), end: new Date('2026-11-12T23:00:00Z'), allDay: true }
+  }));
+  assert.deepStrictEqual(e.event, { start: '2026-11-10', end: '2026-11-12', allDay: true, place: '' });
+  assert.strictEqual(Org.fromEvent(e).evType, 'curso');
+});
+test('convocatoria de reunión con las fechas estándar', () => {
+  const e = Org.parseMsg(makeMsg({
+    subject: 'Comité', senderName: 'Secretaría',
+    appointment: { messageClass: 'IPM.Schedule.Meeting.Request', std: true, start: new Date('2026-07-01T08:00:00Z'), end: new Date('2026-07-01T09:00:00Z') }
+  }));
+  assert.strictEqual(e.event.start, '2026-07-01T10:00'); // horario de verano
+  assert.strictEqual(e.event.end, '2026-07-01T11:00');
+});
+test('un correo normal no es una cita', () => {
+  assert.strictEqual(Org.parseMsg(makeMsg({ subject: 'Hola', senderName: 'A' })).event, undefined);
+});
+test('fichero .ics: líneas plegadas, escapes, TZID y organizador', () => {
+  const ics = '﻿BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Romance Standard Time\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\n' +
+    'ORGANIZER;CN="Pérez, Juan":mailto:juan@example.es\r\nSUMMARY:Jornada técnica\\, catastro y\r\n  registro\r\n' +
+    'DTSTART;TZID=Romance Standard Time:20261118T093000\r\nDTEND;TZID=Romance Standard Time:20261118T140000\r\n' +
+    'LOCATION:Salón de actos\r\nDESCRIPTION:Primera línea\\nSegunda\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+  const e = Org.parseEmailFile('invitacion.ics', new Uint8Array(Buffer.from(ics, 'utf8')));
+  assert.strictEqual(e.subject, 'Jornada técnica, catastro y registro');
+  assert.strictEqual(e.from, 'Pérez, Juan'); assert.strictEqual(e.fromAddr, 'juan@example.es');
+  assert.deepStrictEqual(e.event, { start: '2026-11-18T09:30', end: '2026-11-18T14:00', allDay: false, place: 'Salón de actos' });
+  assert.strictEqual(e.snippet, 'Primera línea Segunda');
+  assert.strictEqual(Org.fromEvent(e).evType, 'curso');
+});
+test('.ics en UTC, de todo el día y con duración', () => {
+  const ev = s => Org.parseIcs('BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:x\n' + s + '\nEND:VEVENT\nEND:VCALENDAR').event;
+  assert.strictEqual(ev('DTSTART:20261201T080000Z\nDTEND:20261201T090000Z').start, '2026-12-01T09:00');
+  assert.deepStrictEqual(ev('DTSTART;VALUE=DATE:20261201\nDTEND;VALUE=DATE:20261202'), { start: '2026-12-01', end: '', allDay: true, place: '' });
+  assert.strictEqual(ev('DTSTART;VALUE=DATE:20261201\nDTEND;VALUE=DATE:20261204').end, '2026-12-03');
+  assert.strictEqual(ev('DTSTART:20261201T100000\nDURATION:PT1H30M').end, '2026-12-01T11:30');
+  assert.throws(() => Org.parseIcs('BEGIN:VCALENDAR\nEND:VCALENDAR'), /ninguna cita/);
+});
+test('convocatoria en .eml con la cita en una parte text/calendar en base64', () => {
+  const cal = Buffer.from('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Revisión\r\nDTSTART:20261120T110000Z\r\nDTEND:20261120T120000Z\r\nLOCATION:Teams\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n').toString('base64');
+  const eml = ['From: Ana <ana@example.es>', 'Subject: Revisión', 'Date: Mon, 26 Oct 2026 12:00:00 +0000', 'Content-Type: multipart/alternative; boundary=XX', '',
+    '--XX', 'Content-Type: text/plain; charset=utf-8', '', 'Únete a la reunión', '--XX', 'Content-Type: text/calendar; charset=utf-8; method=REQUEST',
+    'Content-Transfer-Encoding: base64', '', cal, '--XX--', ''].join('\r\n');
+  const e = Org.parseEml(Buffer.from(eml, 'utf8'));
+  assert.strictEqual(e.snippet, 'Únete a la reunión');
+  assert.deepStrictEqual(e.event, { start: '2026-11-20T12:00', end: '2026-11-20T13:00', allDay: false, place: 'Teams' });
 });
 
 console.log(`\n${ok} correctas, ${fail} fallidas`);

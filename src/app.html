@@ -175,13 +175,13 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   <button class="btn" style="border:0;text-align:left" data-act="open">Abrir otro fichero…</button>
   <button class="btn" style="border:0;text-align:left" data-act="create">Crear fichero nuevo…</button>
   <button class="btn" style="border:0;text-align:left" data-act="download">Descargar una copia</button>
-  <button class="btn" style="border:0;text-align:left" data-act="import">Añadir correos (.msg o .eml)…</button>
+  <button class="btn" style="border:0;text-align:left" data-act="import">Añadir correos o citas (.msg, .eml, .ics)…</button>
 </div>
 <input type="file" id="fileIn" accept=".json,application/json" class="hidden">
-<input type="file" id="mailIn" accept=".msg,.eml,message/rfc822" multiple class="hidden">
+<input type="file" id="mailIn" accept=".msg,.eml,.ics,message/rfc822,text/calendar" multiple class="hidden">
 
 <dialog id="dlg"><form method="dialog" id="frm"></form></dialog>
-<div id="drop" class="hidden">Suelta aquí el correo</div>
+<div id="drop" class="hidden">Suelta aquí el correo o la cita</div>
 <div id="toast" class="hidden"></div>
 
 <script>
@@ -312,9 +312,14 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       try { mails.push(Org.parseEmailFile(f.name, new Uint8Array(await f.arrayBuffer()))); }
       catch (e) { toast(f.name + ': ' + e.message); }
     }
+    // Las citas van a la agenda; un correo normal, al tipo de la pestaña abierta (por defecto, por contestar)
     (function next() {
       var m = mails.shift(); if (!m) return;
-      editItem(null, Object.assign({ kind: 'responder' }, Org.fromEmail(m, 'responder')), next);
+      if (m.event) { editItem(null, Org.fromEvent(m), next); return; }
+      var k = S.view === 'esperar' || S.view === 'tarea' || S.view === 'evento' ? S.view : 'responder';
+      var pre = Object.assign({ kind: k }, Org.fromEmail(m, k));
+      if (k === 'evento') pre.start = (S.calSel || Org.today()) + 'T09:00';
+      editItem(null, pre, next);
     })();
   }
   $('#mailIn').addEventListener('change', function () { var fs = this.files; importFiles(fs).then(() => { this.value = ''; }); });
@@ -491,7 +496,8 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     h += '</h3><button class="btn small" data-cal="-1">◀</button><button class="btn small" data-cal="0">Hoy</button><button class="btn small" data-cal="1">▶</button>' +
       '<span class="grow"></span><button class="btn small' + (S.calMode === 'mes' ? ' primary' : '') + '" data-calmode="mes">Mes</button>' +
       '<button class="btn small' + (S.calMode === 'semana' ? ' primary' : '') + '" data-calmode="semana">Semana</button>' +
-      '<button class="btn small" data-new="evento" data-day="' + S.calSel + '">+ Cita</button></div>';
+      '<button class="btn small" data-new="evento" data-day="' + S.calSel + '">+ Cita</button><button class="btn small" data-act="import">Añadir desde fichero…</button></div>' +
+      '<p class="hint" style="margin:-4px 0 10px">Arrastra aquí citas desde el calendario de Outlook o convocatorias desde la bandeja de entrada.</p>';
     if (S.calMode === 'semana') {
       var w0 = Org.weekStart(S.calSel), ag = Org.agenda(S.data, w0, Org.addDays(w0, 6));
       h += '<div class="week">';
@@ -537,8 +543,10 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       }).join('') + '</div>';
       if (v.email) {
         var e = v.email;
-        h += '<div class="mail"><b>' + esc(e.subject || '(sin asunto)') + '</b><div>De ' + esc(e.from || '') + (e.fromAddr ? ' &lt;' + esc(e.fromAddr) + '&gt;' : '') +
-          (e.date ? ' · ' + esc(new Date(e.date).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })) : '') + '</div>' +
+        var who = [];
+        if (e.from || e.fromAddr) who.push('De ' + esc(e.from || '') + (e.fromAddr ? ' &lt;' + esc(e.fromAddr) + '&gt;' : ''));
+        if (e.date) who.push(esc(new Date(e.date).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })));
+        h += '<div class="mail"><b>' + esc(e.subject || '(sin asunto)') + '</b>' + (who.length ? '<div>' + who.join(' · ') + '</div>' : '') +
           (e.snippet ? '<div class="snip">' + esc(e.snippet) + '</div>' : '') + '</div>';
       }
       h += '<div class="fields"><label class="full">' + (k === 'evento' ? 'Título' : k === 'responder' ? 'Asunto' : 'Título') +
