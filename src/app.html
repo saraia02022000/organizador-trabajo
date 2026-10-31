@@ -4,6 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Organizador de trabajo</title>
+<meta name="theme-color" content="#2f5bd3">
+<link rel="icon" href="icons/icono.svg" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Organizador">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>
+// Instalable como aplicación solo cuando se sirve por web (abierto como fichero local daría errores)
+if (/^https?:$/.test(location.protocol)) {
+  var mf = document.createElement('link'); mf.rel = 'manifest'; mf.href = 'manifest.webmanifest'; document.head.appendChild(mf);
+  if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+}
+</script>
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #677085; --line: #e2e5eb; --soft: #eef1f5;
