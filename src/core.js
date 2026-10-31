@@ -58,7 +58,7 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   };
   Org.emptyData = function () {
-    return { app: 'organizador-trabajo', version: 1, updated: new Date().toISOString(), items: [] };
+    return { app: 'organizador-trabajo', version: 1, updated: new Date().toISOString(), items: [], deleted: {} };
   };
   var DEFAULTS = {
     title: '', notes: '', status: 'abierto', priority: 'normal', due: '', person: '', work: '',
@@ -84,7 +84,35 @@
     });
     data.app = 'organizador-trabajo';
     data.version = data.version || 1;
+    data.deleted = data.deleted && typeof data.deleted === 'object' ? data.deleted : {};
     return data;
+  };
+
+  // Combina dos versiones de los datos (p. ej., la del iPhone y la del PC): de cada elemento se queda
+  // la versión modificada más tarde, y un borrado gana si es posterior a la última modificación.
+  var TOMBSTONE_DAYS = 400;
+  Org.merge = function (a, b) {
+    var deleted = {}, byId = {}, order = [];
+    [a, b].forEach(function (d) {
+      for (var id in d.deleted || {}) if (!deleted[id] || d.deleted[id] > deleted[id]) deleted[id] = d.deleted[id];
+      (d.items || []).forEach(function (it) {
+        var cur = byId[it.id];
+        if (!cur) order.push(it.id);
+        if (!cur || (it.updated || '') > (cur.updated || '')) byId[it.id] = it;
+      });
+    });
+    var limit = new Date(Date.now() - TOMBSTONE_DAYS * 86400000).toISOString();
+    for (var k in deleted) if (deleted[k] < limit) delete deleted[k];
+    return {
+      app: 'organizador-trabajo', version: Math.max(a.version || 1, b.version || 1),
+      updated: (a.updated || '') > (b.updated || '') ? a.updated : b.updated, deleted: deleted,
+      items: order.map(function (id) { return byId[id]; }).filter(function (it) { return !(deleted[it.id] && deleted[it.id] >= (it.updated || '')); })
+    };
+  };
+  // Firma del contenido, para saber si dos versiones son iguales
+  Org.same = function (a, b) {
+    var key = function (d) { return JSON.stringify([d.items.map(function (i) { return i.id + i.updated; }).sort(), Object.keys(d.deleted || {}).sort()]); };
+    return key(a) === key(b);
   };
   Org.touch = function (it) { it.updated = new Date().toISOString(); return it; };
   Org.setDone = function (it, done) {
@@ -189,7 +217,8 @@
   };
   Org.remove = function (data, id) {
     data.items = data.items.filter(function (it) { return it.id !== id; });
-    data.items.forEach(function (it) { if (it.work === id) it.work = ''; });
+    data.items.forEach(function (it) { if (it.work === id) { it.work = ''; Org.touch(it); } });
+    (data.deleted = data.deleted || {})[id] = new Date().toISOString();
   };
 
   function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }

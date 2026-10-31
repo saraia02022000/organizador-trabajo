@@ -95,6 +95,55 @@ test('búsqueda sin acentos ni mayúsculas', () => {
   assert.ok(!Org.matches(it, 'urbanismo'));
 });
 
+console.log('Combinar versiones (iPhone y PC)');
+function clone(x) { return JSON.parse(JSON.stringify(x)); }
+const stampAt = s => '2026-10-31T' + s + ':00.000Z';
+function base() {
+  const d = Org.emptyData();
+  d.items.push(
+    Object.assign(Org.makeItem('tarea', { title: 'A' }), { id: 'a', updated: stampAt('08:00') }),
+    Object.assign(Org.makeItem('tarea', { title: 'B' }), { id: 'b', updated: stampAt('08:00') }),
+    Object.assign(Org.makeItem('trabajo', { title: 'W' }), { id: 'w', updated: stampAt('08:00') }));
+  return d;
+}
+test('se queda con la versión más reciente de cada elemento y suma los nuevos', () => {
+  const pc = base(), movil = clone(pc);
+  Object.assign(pc.items[0], { title: 'A (PC)', updated: stampAt('10:00') });
+  Object.assign(movil.items[0], { title: 'A (móvil)', updated: stampAt('09:00') });
+  Object.assign(movil.items[1], { status: 'hecho', updated: stampAt('09:30') });
+  movil.items.push(Object.assign(Org.makeItem('responder', { title: 'Nuevo en el móvil' }), { id: 'n', updated: stampAt('09:40') }));
+  const m = Org.merge(pc, movil);
+  assert.deepStrictEqual(m.items.map(i => i.id), ['a', 'b', 'w', 'n']);
+  assert.strictEqual(m.items[0].title, 'A (PC)');
+  assert.strictEqual(m.items[1].status, 'hecho');
+  assert.ok(Org.same(Org.merge(movil, pc), m)); // no depende del orden
+});
+test('un borrado gana salvo que el elemento se modificara después en el otro dispositivo', () => {
+  const pc = base(), movil = clone(pc);
+  pc.items = pc.items.filter(i => i.id !== 'b'); pc.deleted.b = stampAt('10:00');
+  pc.items = pc.items.filter(i => i.id !== 'a'); pc.deleted.a = stampAt('10:00');
+  Object.assign(movil.items[0], { title: 'A editada después', updated: stampAt('11:00') });
+  const m = Org.merge(pc, movil);
+  assert.deepStrictEqual(m.items.map(i => i.id).sort(), ['a', 'w']);
+  assert.ok(m.deleted.b);
+});
+test('borrar un trabajo registra el borrado y desvincula lo que colgaba de él', () => {
+  const d = base(); d.items[0].work = 'w';
+  Org.remove(d, 'w');
+  assert.ok(d.deleted.w);
+  assert.strictEqual(d.items[0].work, '');
+  assert.ok(d.items[0].updated > stampAt('08:00'));
+  const m = Org.merge(base(), d);
+  assert.ok(!m.items.some(i => i.id === 'w'));
+  assert.strictEqual(m.items.find(i => i.id === 'a').work, '');
+});
+test('los borrados muy antiguos se olvidan y un fichero antiguo sin borrados se lee', () => {
+  const d = base(); d.deleted.viejo = '2020-01-01T00:00:00.000Z';
+  assert.ok(!Org.merge(d, base()).deleted.viejo);
+  const old = Org.normalize({ items: [{ kind: 'tarea', title: 'x' }] });
+  assert.deepStrictEqual(old.deleted, {});
+});
+
 console.log('Correos .eml');
 test('cabeceras codificadas y cuerpo en quoted-printable', () => {
   const eml = [

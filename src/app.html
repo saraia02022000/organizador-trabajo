@@ -34,6 +34,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 "Seg
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
+html.movil .only-pc, html:not(.movil) .only-movil { display: none !important; }
 
 header { background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
 .bar { max-width: 1180px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -172,12 +173,16 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
 <main id="main"></main>
 
 <div id="menu" class="hidden" style="position:fixed;z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.2);padding:6px;display:grid;min-width:240px">
-  <button class="btn" style="border:0;text-align:left" data-act="open">Abrir otro fichero…</button>
-  <button class="btn" style="border:0;text-align:left" data-act="create">Crear fichero nuevo…</button>
-  <button class="btn" style="border:0;text-align:left" data-act="download">Descargar una copia</button>
+  <button class="btn only-movil" style="border:0;text-align:left" data-act="share">Guardar en OneDrive…</button>
+  <button class="btn only-movil" style="border:0;text-align:left" data-act="open">Actualizar desde OneDrive…</button>
+  <button class="btn only-pc" style="border:0;text-align:left" data-act="open">Abrir otro fichero…</button>
+  <button class="btn only-pc" style="border:0;text-align:left" data-act="create">Crear fichero nuevo…</button>
+  <button class="btn" style="border:0;text-align:left" data-act="merge">Combinar con otro fichero…</button>
+  <button class="btn only-pc" style="border:0;text-align:left" data-act="download">Descargar una copia</button>
   <button class="btn" style="border:0;text-align:left" data-act="import">Añadir correos o citas (.msg, .eml, .ics)…</button>
 </div>
 <input type="file" id="fileIn" accept=".json,application/json" class="hidden">
+<input type="file" id="mergeIn" accept=".json,application/json" class="hidden">
 <input type="file" id="mailIn" accept=".msg,.eml,.ics,message/rfc822,text/calendar" multiple class="hidden">
 
 <dialog id="dlg"><form method="dialog" id="frm"></form></dialog>
@@ -193,14 +198,21 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var KC = function (k) { return 'var(--k-' + k + ')'; };
-  var FS = typeof window.showOpenFilePicker === 'function';
-  var LS_KEY = 'organizador-copia', LS_UI = 'organizador-ui';
+  // Sin File System Access API (iPhone, Firefox) el fichero se abre como copia y se guarda compartiéndolo.
+  // ?movil fuerza ese modo para probarlo en el PC.
+  var FS = typeof window.showOpenFilePicker === 'function' && !/[?&]movil\b/.test(location.search);
+  var LS_KEY = 'organizador-copia', LS_UI = 'organizador-ui', LS_COPY = 'organizador-copia-info';
 
   var S = {
     data: null, view: 'hoy', q: '', showDone: {}, openWork: {}, calMonth: null, calSel: null, calMode: 'mes',
-    handle: null, fileName: '', lastMod: 0, mode: 'none', saveState: '', saveTimer: null, conflict: false, remembered: null
+    handle: null, fileName: '', lastMod: 0, mode: 'none', saveState: '', saveTimer: null, remembered: null,
+    pending: false, openedAt: ''
   };
   try { var ui = JSON.parse(localStorage.getItem(LS_UI) || '{}'); if (ui.view) S.view = ui.view; if (ui.calMode) S.calMode = ui.calMode; } catch (e) {}
+  // Estado de la copia del modo sin fichero: si tiene cambios que aún no están en OneDrive y cuándo se abrió
+  try { var ci = JSON.parse(localStorage.getItem(LS_COPY) || '{}'); S.pending = !!ci.pending; S.openedAt = ci.openedAt || ''; S.fileName = ci.fileName || ''; } catch (e) {}
+  document.documentElement.classList.toggle('movil', !FS);
+  function saveCopyInfo() { try { localStorage.setItem(LS_COPY, JSON.stringify({ pending: S.pending, openedAt: S.openedAt, fileName: S.fileName })); } catch (e) {} }
 
   function toast(t) {
     var el = $('#toast'); el.textContent = t; el.classList.remove('hidden');
@@ -225,10 +237,11 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   function backup() { try { localStorage.setItem(LS_KEY, JSON.stringify(S.data)); } catch (e) {} }
   function readBackup() { try { var t = localStorage.getItem(LS_KEY); return t ? Org.normalize(JSON.parse(t)) : null; } catch (e) { return null; } }
 
+  function parseData(text) { return text.trim() ? Org.normalize(JSON.parse(text)) : Org.emptyData(); }
   async function loadHandle(h) {
     var f = await h.getFile();
-    var data = Org.normalize(JSON.parse((await f.text()) || '{}'));
-    S.handle = h; S.fileName = f.name; S.lastMod = f.lastModified; S.mode = 'file'; S.data = data; S.conflict = false;
+    var data = parseData(await f.text());
+    S.handle = h; S.fileName = f.name; S.lastMod = f.lastModified; S.mode = 'file'; S.data = data;
     S.saveState = 'ok'; backup(); idb('put', h); render();
   }
   async function ensurePerm(h) {
@@ -265,43 +278,83 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   // Cada cambio se guarda al momento en la copia local y, medio segundo después, en el fichero
   function changed() {
     S.data.updated = new Date().toISOString();
+    if (S.mode === 'local') { S.pending = true; saveCopyInfo(); }
     backup(); render();
     if (S.mode !== 'file') return;
     S.saveState = 'busy'; renderFile();
     clearTimeout(S.saveTimer); S.saveTimer = setTimeout(function () { writeNow(); }, 500);
   }
+  async function readHandle() {
+    var f = await S.handle.getFile();
+    return { file: f, data: parseData(await f.text()) };
+  }
   async function writeNow(force) {
     S.saveTimer = null;
     try {
       if (!(await ensurePerm(S.handle))) throw new Error('sin permiso para escribir');
+      // Si otro dispositivo cambió el fichero (OneDrive), primero se combinan las dos versiones
       if (!force && S.lastMod) {
-        var cur = await S.handle.getFile();
-        if (cur.lastModified !== S.lastMod) { S.conflict = true; S.saveState = 'err'; render(); return; }
+        var cur = await readHandle();
+        if (cur.file.lastModified !== S.lastMod) {
+          S.data = Org.merge(S.data, cur.data); backup(); render();
+          toast('Se han añadido los cambios hechos en otro dispositivo');
+        }
       }
       var w = await S.handle.createWritable();
       await w.write(JSON.stringify(S.data, null, 1)); await w.close();
-      S.lastMod = (await S.handle.getFile()).lastModified; S.saveState = 'ok'; S.conflict = false;
+      S.lastMod = (await S.handle.getFile()).lastModified; S.saveState = 'ok';
     } catch (e) { S.saveState = 'err'; toast('No se ha podido guardar: ' + e.message); }
     renderFile();
   }
-  // Al volver a la ventana, si otro dispositivo cambió el fichero (OneDrive), se carga
+  // Al volver a la ventana, si otro dispositivo cambió el fichero (OneDrive), se combina con lo que hay
   async function checkExternal() {
-    if (S.mode !== 'file' || S.saveTimer || S.conflict || !S.handle) return;
+    if (S.mode !== 'file' || S.saveTimer || !S.handle) return;
     try {
       if ((await S.handle.queryPermission({ mode: 'readwrite' })) !== 'granted') return;
-      var f = await S.handle.getFile();
-      if (f.lastModified !== S.lastMod) { await loadHandle(S.handle); toast('Se han cargado los cambios hechos en otro dispositivo'); }
+      var cur = await readHandle();
+      if (cur.file.lastModified === S.lastMod) return;
+      var merged = Org.merge(S.data, cur.data), news = !Org.same(merged, S.data);
+      S.lastMod = cur.file.lastModified; S.data = merged; backup();
+      if (news) { render(); toast('Se han añadido los cambios hechos en otro dispositivo'); }
+      // El fichero que llegó no tenía todo (p. ej., una copia antigua): se escribe la versión combinada
+      if (!Org.same(merged, cur.data)) { S.saveState = 'busy'; renderFile(); await writeNow(true); }
     } catch (e) {}
   }
   window.addEventListener('focus', checkExternal);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) checkExternal(); });
   window.addEventListener('beforeunload', function (e) { if (S.saveTimer) { e.preventDefault(); e.returnValue = ''; } });
 
+  // Modo sin fichero: abrir (o actualizar) la copia combina con lo que ya hubiera en este dispositivo
   $('#fileIn').addEventListener('change', async function () {
     var f = this.files[0]; this.value = ''; if (!f) return;
-    try { S.data = Org.normalize(JSON.parse(await f.text())); S.fileName = f.name; S.mode = 'local'; backup(); render(); toast('Fichero cargado'); }
-    catch (e) { toast('No se ha podido leer: ' + e.message); }
+    try {
+      var data = parseData(await f.text()), had = S.data && S.mode === 'local' && S.pending;
+      S.data = S.data && S.mode === 'local' ? Org.merge(S.data, data) : data;
+      S.pending = !Org.same(S.data, data); S.fileName = f.name; S.mode = 'local'; S.openedAt = new Date().toISOString();
+      saveCopyInfo(); backup(); render();
+      toast(had && S.pending ? 'Combinado con los cambios de este dispositivo que aún no estaban en OneDrive' : 'Fichero cargado');
+    } catch (e) { toast('No se ha podido leer: ' + e.message); }
   });
+  // Por si quedó otra versión con otro nombre (p. ej., «organizador (1).json»)
+  $('#mergeIn').addEventListener('change', async function () {
+    var f = this.files[0]; this.value = ''; if (!f) return;
+    try {
+      var data = parseData(await f.text()), merged = Org.merge(S.data, data);
+      if (Org.same(merged, S.data)) { toast('Ese fichero no tiene nada nuevo'); return; }
+      S.data = merged; changed(); toast('Se han añadido los cambios de ' + f.name);
+    } catch (e) { toast('No se ha podido leer: ' + e.message); }
+  });
+  // Guardar desde el iPhone: menú de compartir → «Guardar en Archivos» → OneDrive
+  async function shareFile() {
+    var name = /\.json$/i.test(S.fileName) ? S.fileName : 'organizador.json';
+    var file = new File([JSON.stringify(S.data, null, 1)], name, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); }
+      catch (e) { if (e.name !== 'AbortError') toast('No se ha podido compartir: ' + e.message); return; }
+    } else download();
+    S.pending = false; saveCopyInfo(); render();
+    toast('Si lo has guardado en OneDrive, el PC lo combinará al abrirlo');
+  }
 
   // ---------- Correos ----------
   async function importFiles(files) {
@@ -347,7 +400,8 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     if (S.mode === 'file') {
       var st = { ok: ['ok', 'Guardado'], busy: ['busy', 'Guardando…'], err: ['err', 'Sin guardar'] }[S.saveState] || ['', ''];
       el.innerHTML = '<span class="dot ' + st[0] + '"></span>' + esc(S.fileName) + ' · ' + st[1];
-    } else if (S.mode === 'local') el.innerHTML = '<span class="dot busy"></span>Solo en este navegador';
+    } else if (S.mode === 'local' && !FS) el.innerHTML = S.pending ? '<span class="dot busy"></span>Cambios sin guardar en OneDrive' : '<span class="dot ok"></span>Copia de OneDrive';
+    else if (S.mode === 'local') el.innerHTML = '<span class="dot busy"></span>Solo en este navegador';
     else el.innerHTML = '';
   }
   function render() {
@@ -371,12 +425,15 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     try { localStorage.setItem(LS_UI, JSON.stringify({ view: S.view, calMode: S.calMode })); } catch (e) {}
   }
   function banner() {
-    if (S.conflict) return '<div class="banner err">El fichero ha cambiado desde otro dispositivo y tus últimos cambios no se han guardado.' +
-      '<button class="btn small" data-act="reload">Cargar el del fichero</button><button class="btn small" data-act="overwrite">Guardar los míos encima</button></div>';
-    if (S.mode === 'local') return '<div class="banner">Los cambios solo se guardan en este navegador. ' +
-      (FS ? '<button class="btn small" data-act="create">Guardar en un fichero…</button>' :
-        'Para pasarlos a OneDrive, <button class="link" data-act="download">descarga el fichero</button> y sustituye el de tu carpeta.') + '</div>';
-    return '';
+    if (S.mode !== 'local') return '';
+    if (FS) return '<div class="banner">Los cambios solo se guardan en este navegador. <button class="btn small" data-act="create">Guardar en un fichero…</button></div>';
+    if (S.pending) return '<div class="banner"><div style="flex:1 1 260px"><b>Hay cambios que aún no están en OneDrive.</b><br>' +
+      '<span class="hint">En el menú que se abre, elige «Guardar en Archivos», entra en OneDrive y en la carpeta de ' + esc(S.fileName || 'organizador.json') +
+      ' y pulsa «Guardar». Si pregunta qué hacer con el que ya existe, elige «Reemplazar».</span></div>' +
+      '<button class="btn primary small" data-act="share">Guardar en OneDrive</button></div>';
+    return '<div class="banner" style="background:var(--soft)"><span style="flex:1 1 200px">Copia de ' + esc(S.fileName || 'tus datos') +
+      (S.openedAt ? ' abierta ' + esc(Org.relDate(Org.ymd(new Date(S.openedAt)), Org.today())) + ' a las ' + esc(new Date(S.openedAt).toTimeString().slice(0, 5)) : '') +
+      '.</span><button class="btn small" data-act="open">Actualizar desde OneDrive</button></div>';
   }
   function renderStart() {
     var bk = readBackup();
@@ -633,10 +690,10 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       else if (a === 'create') createFile(S.data);
       else if (a === 'reopen') reopen();
       else if (a === 'download') download();
+      else if (a === 'share') shareFile();
+      else if (a === 'merge') $('#mergeIn').click();
       else if (a === 'import') $('#mailIn').click();
       else if (a === 'backup') { S.data = readBackup(); S.mode = 'local'; render(); }
-      else if (a === 'reload') loadHandle(S.handle);
-      else if (a === 'overwrite') writeNow(true);
       return;
     }
     if (t.matches('[data-done]')) {
