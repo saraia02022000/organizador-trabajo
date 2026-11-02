@@ -170,6 +170,9 @@ async function test(name, fn) {
     t = texts((await run({})).widget);
     assert.ok(t.some((x) => /Abre este script en Scriptable/.test(x)));
   });
+  await test('sin caracteres invisibles que se estropeen al copiar y pegar', async () => {
+    assert.strictEqual((CODE.match(/[̀-ͯ​-‏  ﻿]/g) || []).length, 0);
+  });
   await test('el enlace escrito al principio del código manda sobre el parámetro y el llavero', async () => {
     assert.ok(CODE.indexOf("const ENLACE = '';") > 0 && CODE.indexOf("const ENLACE = '';") < 600, 'ENLACE debe estar arriba del todo');
     const saved = CODE;

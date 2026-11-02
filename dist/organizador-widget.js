@@ -345,7 +345,7 @@ const Org = (function (root) {
     (data.deleted = data.deleted || {})[id] = new Date().toISOString();
   };
 
-  function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
   Org.matches = function (it, q) {
     if (!q) return true;
     var hay = norm([it.title, it.notes, it.person, it.place, it.email && it.email.subject, it.email && it.email.from,
