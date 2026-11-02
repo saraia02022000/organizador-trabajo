@@ -63,14 +63,14 @@
   var DEFAULTS = {
     title: '', notes: '', status: 'abierto', priority: 'normal', due: '', person: '', work: '',
     email: null, since: '', evType: 'reunion', start: '', end: '', place: '', log: null, doneAt: '',
-    repeat: null, lastDone: ''
+    repeat: null, lastDone: '', docs: null
   };
   Org.makeItem = function (kind, fields) {
     if (!Org.KINDS[kind]) throw new Error('Tipo desconocido: ' + kind);
     var now = new Date().toISOString();
     var it = { id: Org.newId(), kind: kind, created: now, updated: now };
     for (var k in DEFAULTS) it[k] = DEFAULTS[k];
-    if (kind === 'trabajo') it.log = [];
+    if (kind === 'trabajo') { it.log = []; it.docs = []; }
     if (fields) for (var f in fields) it[f] = fields[f];
     return it;
   };
@@ -81,6 +81,7 @@
       for (var k in DEFAULTS) if (it[k] === undefined) it[k] = DEFAULTS[k];
       if (!it.id) it.id = Org.newId();
       if (it.kind === 'trabajo' && !Array.isArray(it.log)) it.log = [];
+      if (it.kind === 'trabajo' && !Array.isArray(it.docs)) it.docs = [];
       return it;
     });
     data.app = 'organizador-trabajo';
@@ -305,6 +306,32 @@
     work.log.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     return Org.touch(work);
   };
+  // ---------- Documentación de los trabajos ----------
+  // Enlaces web (se abren) o rutas de ficheros del PC o de la red (el navegador no las abre: se copian)
+  Org.cleanDocUrl = function (s) {
+    s = (s || '').trim().replace(/^["'<]+|["'>]+$/g, '').trim();
+    if (/^(www\.|[a-z0-9-]+\.(es|com|org|net|eu|gob\.es)\b)/i.test(s) && !/\s/.test(s)) s = 'https://' + s;
+    return s;
+  };
+  Org.docKind = function (url) { return /^(https?|mailto):/i.test(url) ? 'web' : 'local'; };
+  // Título por defecto: el nombre del fichero o, en una web, el último tramo de la dirección o el dominio
+  Org.docTitle = function (url) {
+    if (Org.docKind(url) === 'local') return url.replace(/^file:\/+/i, '').split(/[\\/]/).filter(Boolean).pop() || url;
+    try {
+      var u = new URL(url), last = u.pathname.split('/').filter(Boolean).pop();
+      last = last ? decodeURIComponent(last).replace(/\.aspx$/i, '') : '';
+      return last && !/^(index|default|_layouts|r|s|f|g|personal)$/i.test(last) && last.length > 2 ? last + ' (' + u.hostname + ')' : u.hostname;
+    } catch (e) { return url; }
+  };
+  Org.addDoc = function (work, url, title) {
+    url = Org.cleanDocUrl(url); if (!url) return null;
+    var d = { title: (title || '').trim() || Org.docTitle(url), url: url, added: Org.today() };
+    (work.docs = work.docs || []).push(d);
+    Org.touch(work);
+    return d;
+  };
+  Org.removeDoc = function (work, i) { work.docs.splice(i, 1); return Org.touch(work); };
+
   Org.remove = function (data, id) {
     data.items = data.items.filter(function (it) { return it.id !== id; });
     data.items.forEach(function (it) { if (it.work === id) { it.work = ''; Org.touch(it); } });
@@ -315,7 +342,8 @@
   Org.matches = function (it, q) {
     if (!q) return true;
     var hay = norm([it.title, it.notes, it.person, it.place, it.email && it.email.subject, it.email && it.email.from,
-      it.email && it.email.fromAddr, (it.log || []).map(function (l) { return l.text; }).join(' ')].join(' '));
+      it.email && it.email.fromAddr, (it.log || []).map(function (l) { return l.text; }).join(' '),
+      (it.docs || []).map(function (d) { return d.title; }).join(' ')].join(' '));
     return norm(q).split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; });
   };
 

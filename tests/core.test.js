@@ -95,6 +95,34 @@ test('búsqueda sin acentos ni mayúsculas', () => {
   assert.ok(!Org.matches(it, 'urbanismo'));
 });
 
+console.log('Documentación de los trabajos');
+test('enlaces web y rutas: limpieza, tipo y título por defecto', () => {
+  assert.strictEqual(Org.cleanDocUrl('  "C:\\Expedientes\\12-2026\\Informe final.pdf" '), 'C:\\Expedientes\\12-2026\\Informe final.pdf');
+  assert.strictEqual(Org.cleanDocUrl('www.sedecatastro.gob.es'), 'https://www.sedecatastro.gob.es');
+  assert.strictEqual(Org.cleanDocUrl('<https://example.es/a>'), 'https://example.es/a');
+  assert.strictEqual(Org.docKind('https://x.sharepoint.com/:w:/r/sites/a'), 'web');
+  assert.strictEqual(Org.docKind('\\\\servidor\\comun\\plano.dwg'), 'local');
+  assert.strictEqual(Org.docTitle('C:\\Expedientes\\Informe final.pdf'), 'Informe final.pdf');
+  assert.strictEqual(Org.docTitle('\\\\servidor\\comun\\plano.dwg'), 'plano.dwg');
+  assert.strictEqual(Org.docTitle('file:///C:/Docs/acta.docx'), 'acta.docx');
+  assert.strictEqual(Org.docTitle('https://www.example.es/normativa/Orden%20HFP%202026.pdf'), 'Orden HFP 2026.pdf (www.example.es)');
+  assert.strictEqual(Org.docTitle('https://www.sedecatastro.gob.es/'), 'www.sedecatastro.gob.es');
+});
+test('añadir y quitar documentación de un trabajo; la búsqueda la encuentra', () => {
+  const w = Org.makeItem('trabajo', { title: 'Expediente 12' });
+  assert.deepStrictEqual(w.docs, []);
+  const before = w.updated;
+  Org.addDoc(w, 'https://example.es/acta.pdf', 'Acta de la reunión');
+  Org.addDoc(w, 'C:\\Exp\\plano.dwg');
+  assert.deepStrictEqual(w.docs.map(d => d.title), ['Acta de la reunión', 'plano.dwg']);
+  assert.ok(w.updated >= before);
+  assert.ok(Org.matches(w, 'acta'));
+  assert.strictEqual(Org.addDoc(w, '   '), null);
+  Org.removeDoc(w, 0);
+  assert.deepStrictEqual(w.docs.map(d => d.title), ['plano.dwg']);
+  assert.deepStrictEqual(Org.normalize({ items: [{ kind: 'trabajo', title: 'viejo' }] }).items[0].docs, []);
+});
+
 console.log('Repetición');
 const ev = (start, repeat, extra) => Org.makeItem('evento', Object.assign({ title: 'R', start, repeat }, extra));
 const occ = (it, a, b) => Org.occurrences(it, a, b);

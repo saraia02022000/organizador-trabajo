@@ -122,6 +122,12 @@ label.inline { font-size: 14px; color: var(--muted); display: flex; gap: 6px; al
 .addlog input[type=text] { flex: 1 1 160px; min-width: 0; }
 .addlog input[type=date] { flex: none; width: 9.5em !important; }
 .notes { white-space: pre-wrap; font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+.docs { border-radius: 8px; padding: 2px; margin: 0 -2px; }
+.docs.over { outline: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.docs li { align-items: center; }
+.docs a { color: var(--accent); overflow-wrap: anywhere; }
+.docs .docl { min-width: 0; flex: 1; }
+.docs .path { display: block; font-size: 12px; overflow-wrap: anywhere; }
 .mini .row { padding: 7px 10px; }
 @media (max-width: 760px) { .work .body { grid-template-columns: 1fr; } }
 
@@ -273,14 +279,14 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   var DEFAULTS = {
     title: '', notes: '', status: 'abierto', priority: 'normal', due: '', person: '', work: '',
     email: null, since: '', evType: 'reunion', start: '', end: '', place: '', log: null, doneAt: '',
-    repeat: null, lastDone: ''
+    repeat: null, lastDone: '', docs: null
   };
   Org.makeItem = function (kind, fields) {
     if (!Org.KINDS[kind]) throw new Error('Tipo desconocido: ' + kind);
     var now = new Date().toISOString();
     var it = { id: Org.newId(), kind: kind, created: now, updated: now };
     for (var k in DEFAULTS) it[k] = DEFAULTS[k];
-    if (kind === 'trabajo') it.log = [];
+    if (kind === 'trabajo') { it.log = []; it.docs = []; }
     if (fields) for (var f in fields) it[f] = fields[f];
     return it;
   };
@@ -291,6 +297,7 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       for (var k in DEFAULTS) if (it[k] === undefined) it[k] = DEFAULTS[k];
       if (!it.id) it.id = Org.newId();
       if (it.kind === 'trabajo' && !Array.isArray(it.log)) it.log = [];
+      if (it.kind === 'trabajo' && !Array.isArray(it.docs)) it.docs = [];
       return it;
     });
     data.app = 'organizador-trabajo';
@@ -515,6 +522,32 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     work.log.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     return Org.touch(work);
   };
+  // ---------- Documentación de los trabajos ----------
+  // Enlaces web (se abren) o rutas de ficheros del PC o de la red (el navegador no las abre: se copian)
+  Org.cleanDocUrl = function (s) {
+    s = (s || '').trim().replace(/^["'<]+|["'>]+$/g, '').trim();
+    if (/^(www\.|[a-z0-9-]+\.(es|com|org|net|eu|gob\.es)\b)/i.test(s) && !/\s/.test(s)) s = 'https://' + s;
+    return s;
+  };
+  Org.docKind = function (url) { return /^(https?|mailto):/i.test(url) ? 'web' : 'local'; };
+  // Título por defecto: el nombre del fichero o, en una web, el último tramo de la dirección o el dominio
+  Org.docTitle = function (url) {
+    if (Org.docKind(url) === 'local') return url.replace(/^file:\/+/i, '').split(/[\\/]/).filter(Boolean).pop() || url;
+    try {
+      var u = new URL(url), last = u.pathname.split('/').filter(Boolean).pop();
+      last = last ? decodeURIComponent(last).replace(/\.aspx$/i, '') : '';
+      return last && !/^(index|default|_layouts|r|s|f|g|personal)$/i.test(last) && last.length > 2 ? last + ' (' + u.hostname + ')' : u.hostname;
+    } catch (e) { return url; }
+  };
+  Org.addDoc = function (work, url, title) {
+    url = Org.cleanDocUrl(url); if (!url) return null;
+    var d = { title: (title || '').trim() || Org.docTitle(url), url: url, added: Org.today() };
+    (work.docs = work.docs || []).push(d);
+    Org.touch(work);
+    return d;
+  };
+  Org.removeDoc = function (work, i) { work.docs.splice(i, 1); return Org.touch(work); };
+
   Org.remove = function (data, id) {
     data.items = data.items.filter(function (it) { return it.id !== id; });
     data.items.forEach(function (it) { if (it.work === id) { it.work = ''; Org.touch(it); } });
@@ -525,7 +558,8 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   Org.matches = function (it, q) {
     if (!q) return true;
     var hay = norm([it.title, it.notes, it.person, it.place, it.email && it.email.subject, it.email && it.email.from,
-      it.email && it.email.fromAddr, (it.log || []).map(function (l) { return l.text; }).join(' ')].join(' '));
+      it.email && it.email.fromAddr, (it.log || []).map(function (l) { return l.text; }).join(' '),
+      (it.docs || []).map(function (d) { return d.title; }).join(' ')].join(' '));
     return norm(q).split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; });
   };
 
@@ -1021,6 +1055,18 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     toast('Si lo has guardado en OneDrive, el PC lo combinará al abrirlo');
   }
 
+  function copyText(t) {
+    var done = function () { toast('Ruta copiada: pégala en la barra de direcciones del Explorador'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, fallback);
+    else fallback();
+    function fallback() {
+      var ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { prompt('Copia la ruta:', t); }
+      ta.remove();
+    }
+  }
+
   // ---------- Correos ----------
   async function importFiles(files) {
     var list = Array.prototype.slice.call(files), mails = [];
@@ -1044,11 +1090,30 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   var dragDepth = 0;
   document.addEventListener('dragenter', function (e) { if (!S.data) return; e.preventDefault(); dragDepth++; $('#drop').classList.remove('hidden'); });
   document.addEventListener('dragleave', function () { if (--dragDepth <= 0) { dragDepth = 0; $('#drop').classList.add('hidden'); } });
-  document.addEventListener('dragover', function (e) { if (S.data) e.preventDefault(); });
+  // Sobre la documentación de un trabajo, lo que se suelta es un enlace para ese trabajo
+  function docZone(e) { return e.target && e.target.closest ? e.target.closest('[data-docdrop]') : null; }
+  document.addEventListener('dragover', function (e) {
+    if (!S.data) return;
+    e.preventDefault();
+    var z = docZone(e);
+    document.querySelectorAll('.docs.over').forEach(function (x) { if (x !== z) x.classList.remove('over'); });
+    if (z) z.classList.add('over');
+    $('#drop').classList.toggle('hidden', !!z || dragDepth <= 0);
+  });
   document.addEventListener('drop', function (e) {
     e.preventDefault(); dragDepth = 0; $('#drop').classList.add('hidden');
+    document.querySelectorAll('.docs.over').forEach(function (x) { x.classList.remove('over'); });
     if (!S.data) return;
-    var dt = e.dataTransfer;
+    var dt = e.dataTransfer, zone = docZone(e);
+    if (zone) {
+      var url = (dt.getData('text/uri-list') || '').split(/\r?\n/).filter(function (l) { return l && l[0] !== '#'; })[0] || (dt.getData('text/plain') || '').trim().split(/\r?\n/)[0];
+      if (!url) { toast(dt.files && dt.files.length ? 'De un fichero del PC no se puede saber dónde está: copia su ruta (en el Explorador, Mayús + clic derecho → «Copiar como ruta de acceso») y pégala abajo.' : 'No se ha recibido ningún enlace'); return; }
+      // Al arrastrar un enlace de una página, su texto sirve de nombre
+      var a = /<a\b[^>]*>([\s\S]*?)<\/a>/i.exec(dt.getData('text/html') || ''), name = a ? a[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+      var w = S.data.items.find(function (x) { return x.id === zone.dataset.docdrop; });
+      Org.addDoc(w, url, name && name !== url ? name : ''); changed(); toast('Enlace añadido');
+      return;
+    }
     if (dt.files && dt.files.length) { importFiles(dt.files); return; }
     // Algunas versiones de Outlook solo pasan texto
     var txt = (dt.getData('text/plain') || '').trim();
@@ -1190,6 +1255,7 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       var sub = [open.length + ' pendiente' + (open.length === 1 ? '' : 's')];
       if (late) sub.push('<span style="color:var(--late)">' + late + ' fuera de plazo</span>');
       if (w.log.length) sub.push('última nota ' + esc(Org.relDate(w.log[0].date, today)));
+      if (w.docs.length) sub.push(w.docs.length + ' documento' + (w.docs.length === 1 ? '' : 's'));
       if (w.person) sub.push(esc(w.person));
       var head = '<div class="head" data-toggle="' + w.id + '"><input type="checkbox" class="chk" data-done="' + w.id + '"' + (Org.isOpen(w) ? '' : ' checked') + ' title="Cerrar el trabajo">' +
         '<div class="main" style="flex:1"><div class="t">' + esc(w.title) + '</div><div class="s" style="font-size:13px;color:var(--muted)">' + sub.join(' · ') + '</div></div>' +
@@ -1198,13 +1264,24 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       var log = '<ul class="log">' + (w.log.length ? w.log.map(function (l, i) {
         return '<li><span class="d">' + esc(Org.fmtDate(l.date)) + '</span><span>' + esc(l.text) + '</span><button class="link x" data-dellog="' + w.id + ':' + i + '" title="Borrar la nota">✕</button></li>';
       }).join('') : '<li class="hint">Sin notas todavía</li>') + '</ul>';
+      // Enlaces web: se abren; rutas del PC o de la red: el navegador no las abre, se copian para el Explorador
+      var docs = '<h4 style="margin-top:18px">Documentación</h4><div class="docs" data-docdrop="' + w.id + '">' +
+        (w.docs.length ? '<ul class="log">' + w.docs.map(function (d, i) {
+          var web = Org.docKind(d.url) === 'web';
+          return '<li><span title="' + (web ? 'Enlace' : 'Fichero del PC o de la red') + '">' + (web ? '🔗' : '📁') + '</span>' +
+            (web ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" title="' + esc(d.url) + '">' + esc(d.title) + '</a>'
+              : '<span class="docl"><span>' + esc(d.title) + '</span><span class="hint path">' + esc(d.url) + '</span></span><button class="btn small" data-copy="' + esc(d.url) + '">Copiar ruta</button>') +
+            '<button class="link x" data-deldoc="' + w.id + ':' + i + '" title="Quitar el enlace">✕</button></li>';
+        }).join('') + '</ul>' : '<p class="hint" style="margin:0 0 6px">Arrastra aquí un enlace o pégalo abajo.</p>') +
+        '<form class="addlog" data-adddoc="' + w.id + '" style="margin-top:6px"><input type="text" name="u" placeholder="Enlace o ruta del fichero" required>' +
+        '<input type="text" name="n" placeholder="Nombre (opcional)"><button class="btn small">Añadir</button></form></div>';
       return '<div class="work' + (Org.isOpen(w) ? '' : ' closed') + '">' + head + '<div class="body"><div>' +
         (w.notes ? '<p class="notes">' + esc(w.notes) + '</p>' : '') +
         '<h4>Seguimiento</h4><form class="addlog" data-addlog="' + w.id + '"><input type="date" name="d" value="' + today + '"><input type="text" name="t" placeholder="Qué ha pasado…" required><button class="btn small">Anotar</button></form>' + log +
         '</div><div><h4>Pendiente en este trabajo</h4>' + list(linked, { mini: true, noWork: true, kindTag: true, empty: 'Nada vinculado' }) +
         '<div class="toolbar" style="margin:8px 0 0">' + ['responder', 'esperar', 'tarea', 'evento'].map(function (k) {
           return '<button class="btn small" data-new="' + k + '" data-work="' + w.id + '">+ ' + { responder: 'Correo', esperar: 'Espera', tarea: 'Tarea', evento: 'Cita' }[k] + '</button>';
-        }).join('') + '</div></div></div></div>';
+        }).join('') + '</div>' + docs + '</div></div></div>';
     }).join('') + '</div>';
   }
 
@@ -1443,6 +1520,11 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       return;
     }
     if (t.matches('[data-showdone]')) { S.showDone[t.dataset.showdone] = t.checked; render(); return; }
+    if ((el = t.closest('[data-deldoc]'))) {
+      var q = el.dataset.deldoc.split(':'), wd = S.data.items.find(function (x) { return x.id === q[0]; });
+      Org.removeDoc(wd, +q[1]); changed(); return;
+    }
+    if ((el = t.closest('[data-copy]'))) { copyText(el.dataset.copy); return; }
     if ((el = t.closest('[data-dellog]'))) {
       var p = el.dataset.dellog.split(':'), w = S.data.items.find(function (x) { return x.id === p[0]; });
       w.log.splice(+p[1], 1); Org.touch(w); changed(); return;
@@ -1471,7 +1553,16 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     }
   });
   document.addEventListener('submit', function (e) {
-    var f = e.target; if (!f.dataset.addlog) return;
+    var f = e.target;
+    if (f.dataset.adddoc) {
+      e.preventDefault();
+      var wd = S.data.items.find(function (x) { return x.id === f.dataset.adddoc; });
+      if (!Org.addDoc(wd, f.u.value, f.n.value)) return;
+      changed();
+      var iu = document.querySelector('[data-adddoc="' + wd.id + '"] input[name=u]'); if (iu) iu.focus();
+      return;
+    }
+    if (!f.dataset.addlog) return;
     e.preventDefault();
     var w = S.data.items.find(function (x) { return x.id === f.dataset.addlog; });
     var txt = f.t.value.trim(); if (!txt) return;
