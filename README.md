@@ -13,6 +13,28 @@ Correos pendientes de contestar, información que esperas recibir, tareas, traba
 
 Tus datos están solo en ese fichero (y en una copia de tu navegador); nunca se suben a este repositorio.
 
+## Widget para el iPhone (Scriptable)
+
+1. Instala **Scriptable** desde la App Store.
+2. Crea un script nuevo con este instalador y ejecútalo (sirve también para actualizar el widget):
+
+```js
+// Instalador del widget del Organizador: descarga la última versión como «Organizador»
+const url = 'https://saraia02022000.github.io/organizador-trabajo/organizador-widget.js';
+const code = await new Request(url).loadString();
+if (!code.includes('Organizador de trabajo · widget')) throw new Error('No se ha podido descargar el widget');
+const fm = module.filename.includes('Mobile Documents') ? FileManager.iCloud() : FileManager.local();
+fm.writeString(fm.joinPath(fm.documentsDirectory(), 'Organizador.js'), code);
+const a = new Alert();
+a.title = 'Listo';
+a.message = 'Instalado «Organizador». Ábrelo una vez para pegar el enlace de organizador.json.';
+a.addAction('Vale');
+await a.present();
+```
+
+3. Abre el script **Organizador** y pega el enlace de `organizador.json` (en OneDrive: Compartir → Copiar vínculo). Se guarda en el llavero del iPhone.
+4. Añade un widget de Scriptable a la pantalla de inicio, mantenlo pulsado → **Editar widget** → Script: **Organizador**.
+
 ## Desarrollo
 
 ```bash

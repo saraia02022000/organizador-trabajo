@@ -25,11 +25,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Pruebas
-        run: node tests/core.test.js
-      - name: Construir
+      - name: Construir y probar
         run: |
+          node tests/core.test.js
           node build.js
+          node tests/widget.test.js
           mkdir -p _site
           cp -r dist/. _site/
           mv _site/organizador.html _site/index.html

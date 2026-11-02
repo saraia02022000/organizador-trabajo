@@ -7,6 +7,7 @@ Aplicación personal para llevar en un solo sitio: correos pendientes de contest
 ```bash
 node build.js               # genera dist/organizador.html (un único HTML)
 node tests/core.test.js     # pruebas del núcleo
+node tests/widget.test.js   # pruebas del widget de Scriptable con un Scriptable simulado (después de build.js)
 ```
 
 Para probar a mano: abrir `dist/organizador.html` en Edge o Chrome (doble clic). La vista previa del navegador integrado no maneja ficheros locales: servir `dist/` con `python -m http.server` y abrir `http://127.0.0.1:<puerto>/organizador.html`. `window.__org` expone el estado y `render` para depurar.
@@ -21,7 +22,8 @@ src/app.html       Interfaz (HTML + CSS + JS). Marcador /*CORE*/ que build.js su
 src/icons/         Iconos generados (no editar a mano): icono.svg, PNG de 192 y 512, maskable 512, apple-touch-icon (180) y favicon (32).
 src/manifest.webmanifest, src/sw.js   Aplicación instalable (PWA). El service worker pide siempre la red y sin conexión sirve la última copia.
 tools/iconos.js    Dibuja el icono (calendario con marca de hecho sobre fondo azul) y genera src/icons/. Solo al cambiarlo: `npm install` y `node tools/iconos.js` (usa @resvg/resvg-js, dependencia de desarrollo).
-build.js           Genera dist/: organizador.html, iconos, manifiesto y service worker.
+src/widget.js      Widget de Scriptable (iOS): contadores y lo de hoy con los colores de la aplicación.
+build.js           Genera dist/: organizador.html, iconos, manifiesto, service worker y organizador-widget.js (el núcleo hasta «Correos» + src/widget.js).
 tests/core.test.js Pruebas del núcleo.
 tests/cfb_writer.js Fabrica .msg sintéticos (Compound File Binary) para las pruebas.
 ```
@@ -39,6 +41,8 @@ tests/cfb_writer.js Fabrica .msg sintéticos (Compound File Binary) para las pru
 
 - **Aplicación instalable con icono** (pedido el 2026-10-31, para el iPhone y el PC). El manifiesto y el service worker solo se cargan por http(s): abiertos como fichero local darían errores. El navegador integrado del entorno de desarrollo no registra service workers («unknown error when fetching the script»); no es un fallo de la aplicación. En el iPhone, la aplicación de la pantalla de inicio tiene su propio almacenamiento, distinto del de Safari: allí hay que abrir el fichero una vez.
 - `dist/organizador.json` es el fichero de datos real del usuario (lo guardó ahí). Está ignorado por git: no borrarlo ni sobrescribirlo.
+
+- **Widget de Scriptable** (pedido el 2026-11-02): vista rápida del día con los contadores de «Hoy» (`Org.summary`, los mismos números que la aplicación), lo que esté fuera de plazo y lo de hoy; en el grande, también los próximos días; pequeño y pantalla de bloqueo, sin contadores. Se genera desde el núcleo para que las reglas (repeticiones incluidas) no se desfasen, se publica en Pages y se instala o actualiza con el instalador del README (lo guarda como «Organizador» junto al instalador). Lee `organizador.json` desde un enlace de OneDrive: el de empresa (sharepoint.com) con `download=1`, el personal (1drv.ms) con la API `shares/u!…`; o desde un «Marcador de archivo» de Scriptable si en vez de enlace se pone un nombre. El enlace se guarda en el llavero (`organizador-url`) o va en el parámetro del widget. Si falla la descarga, usa la última copia y lo indica. Sin probar en un iPhone real: solo con el simulado de las pruebas.
 
 ## Modelo de datos
 
