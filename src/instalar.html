@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget del Organizador</title>
+<meta name="theme-color" content="#2f5bd3">
+<link rel="icon" href="icons/icono.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root { --bg: #f6f7f9; --panel: #fff; --ink: #1d2330; --muted: #677085; --line: #e2e5eb; --soft: #eef1f5; --accent: #2f5bd3; --accent-ink: #fff; --ok: #2e8a3e; color-scheme: light; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #14171d; --panel: #1c2028; --ink: #e6e9ef; --muted: #98a1b3; --line: #2c323d; --soft: #232833; --accent: #6d8ff0; --accent-ink: #0d1220; --ok: #6cc47b; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #14171d; --panel: #1c2028; --ink: #e6e9ef; --muted: #98a1b3; --line: #2c323d; --soft: #232833; --accent: #6d8ff0; --accent-ink: #0d1220; --ok: #6cc47b; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; display: flex; gap: 10px; align-items: center; }
+h1 img { width: 36px; height: 36px; border-radius: 9px; }
+p.lead { color: var(--muted); margin: 0 0 18px; }
+ol { padding-left: 20px; margin: 0; }
+li { margin: 0 0 18px; }
+li b { font-weight: 650; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-top: 8px; }
+textarea { width: 100%; height: 150px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--ink); background: var(--soft); border: 0; border-radius: 8px; padding: 8px; resize: vertical; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+.btn { display: inline-block; border: 0; border-radius: 10px; padding: 11px 16px; font: inherit; font-weight: 600; background: var(--accent); color: var(--accent-ink); cursor: pointer; margin-top: 8px; }
+.btn.sec { background: var(--soft); color: var(--ink); }
+.ok { color: var(--ok); font-weight: 600; margin-left: 8px; }
+.hint { color: var(--muted); font-size: 14px; }
+details { margin-top: 26px; }
+summary { cursor: pointer; font-weight: 600; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1><img src="icons/icono-192.png" alt="">Widget del Organizador</h1>
+  <p class="lead">Vista rápida del día en la pantalla de inicio del iPhone, con Scriptable.</p>
+  <ol>
+    <li>Instala <b>Scriptable</b> desde la App Store.</li>
+    <li>Pulsa <b>Copiar el instalador</b>. En Scriptable, crea un script nuevo con <b>+</b>, pega y pulsa <b>▶</b>.
+      <div class="box">
+        <textarea id="inst" readonly>{{INSTALADOR}}</textarea>
+        <button class="btn" data-copy="inst">Copiar el instalador</button><span class="ok" id="ok-inst"></span>
+      </div>
+      <p class="hint">Para actualizar el widget en el futuro, vuelve a ejecutar este instalador.</p>
+    </li>
+    <li>Abre el script <b>Organizador</b> que aparece y pega el enlace de <b>organizador.json</b> (en OneDrive: Compartir → Copiar vínculo).</li>
+    <li>Mantén pulsada la pantalla de inicio → <b>+</b> → <b>Scriptable</b> → elige el tamaño. Después mantén pulsado el widget → <b>Editar widget</b> → Script: <b>Organizador</b>.</li>
+  </ol>
+  <details>
+    <summary>Si el instalador no funciona: copiar el widget completo</summary>
+    <p class="hint">Copia todo el código, pégalo en un script nuevo de Scriptable y llámalo «Organizador».</p>
+    <div class="box">
+      <textarea id="full" readonly>Cargando…</textarea>
+      <button class="btn sec" data-copy="full">Copiar el widget completo</button><span class="ok" id="ok-full"></span>
+    </div>
+  </details>
+  <p class="hint" style="margin-top:26px"><a href="./">Volver al organizador</a></p>
+</main>
+<script>
+// El código del widget se carga al abrir la página: así el botón copia al momento (Safari exige copiar en el mismo toque)
+fetch('organizador-widget.js', { cache: 'no-store' }).then(function (r) { return r.text(); })
+  .then(function (t) { document.getElementById('full').value = t; })
+  .catch(function () { document.getElementById('full').value = 'No se ha podido cargar el widget.'; });
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-copy]'); if (!b) return;
+  var id = b.dataset.copy, ta = document.getElementById(id), ok = document.getElementById('ok-' + id);
+  var done = function () { ok.textContent = '✓ Copiado'; setTimeout(function () { ok.textContent = ''; }, 2500); };
+  var fallback = function () { ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length); try { document.execCommand('copy'); done(); } catch (err) { ok.textContent = 'Selecciónalo y copia a mano'; } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done, fallback);
+  else fallback();
+});
+</script>
+</body>
+</html>

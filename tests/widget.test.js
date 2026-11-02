@@ -144,6 +144,40 @@ async function test(name, fn) {
     assert.ok(texts(env.widget).includes('Comité de dirección'));
   });
 
+  console.log('Instalador del widget');
+  const INST = fs.readFileSync(path.join(__dirname, '..', 'src', 'instalador-widget.js'), 'utf8');
+  async function install(filename, response) {
+    const env = makeEnv({ response });
+    const written = {};
+    const mkfm = (dir) => ({ documentsDirectory: () => dir, joinPath: (a, b) => a + '/' + b, writeString: (p, s) => { written[p] = s; } });
+    env.context.FileManager = { local: () => mkfm('/local'), iCloud: () => mkfm('/icloud') };
+    env.context.module = { filename };
+    await vm.runInNewContext('(async () => {\n' + INST + '\n})()', env.context);
+    return { env, written };
+  }
+  await test('solo caracteres sencillos y líneas cortas (para que no se estropee al copiarlo)', async () => {
+    assert.ok(/^[\x20-\x7e\n]*$/.test(INST), 'hay caracteres no ASCII');
+    assert.ok(INST.split('\n').every((l) => l.length <= 100));
+  });
+  await test('descarga el widget publicado y lo guarda como Organizador.js junto al instalador', async () => {
+    let r = await install('/var/mobile/Library/Mobile Documents/iCloud~dk~simonbs~Scriptable/Documents/Instalar.js', CODE);
+    assert.strictEqual(r.env.requests[0], 'https://saraia02022000.github.io/organizador-trabajo/organizador-widget.js');
+    assert.strictEqual(r.written['/icloud/Organizador.js'], CODE);
+    r = await install('/var/mobile/Containers/Data/Application/X/Documents/Instalar.js', CODE);
+    assert.strictEqual(r.written['/local/Organizador.js'], CODE);
+  });
+  await test('si no se descarga el widget, no escribe nada', async () => {
+    let err = null, r;
+    try { r = await install('/local/Instalar.js', '<html>404</html>'); } catch (e) { err = e; }
+    assert.ok(err && /No se pudo descargar/.test(err.message));
+  });
+  await test('la página de instalación lleva el instalador exacto', async () => {
+    const page = fs.readFileSync(path.join(__dirname, '..', 'dist', 'instalar.html'), 'utf8');
+    const m = /<textarea id="inst" readonly>([\s\S]*?)<\/textarea>/.exec(page);
+    const unesc = m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    assert.strictEqual(unesc, INST.trim());
+  });
+
   console.log(`\n${ok} correctas, ${fail} fallidas`);
   process.exit(fail ? 1 : 0);
 })();

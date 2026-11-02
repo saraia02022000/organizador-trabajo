@@ -16,7 +16,7 @@ Tus datos están solo en ese fichero (y en una copia de tu navegador); nunca se 
 ## Widget para el iPhone (Scriptable)
 
 1. Instala **Scriptable** desde la App Store.
-2. Crea un script nuevo con este instalador y ejecútalo (sirve también para actualizar el widget):
+2. Abre https://saraia02022000.github.io/organizador-trabajo/instalar.html en el iPhone, pulsa «Copiar el instalador», pégalo en un script nuevo de Scriptable y ejecútalo (sirve también para actualizar el widget). Es este código:
 
 ```js
 // Instalador del widget del Organizador: descarga la última versión como «Organizador»

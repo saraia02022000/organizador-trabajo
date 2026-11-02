@@ -25,4 +25,10 @@ const widget = '// Variables used by Scriptable.\n// These must be at the very t
   'const Org = ' + core.slice(start, cut) + '  return Org;\n})(this);\n\n' +
   fs.readFileSync(path.join(src, 'widget.js'), 'utf8');
 fs.writeFileSync(path.join(dist, 'organizador-widget.js'), widget);
+
+// Página de instalación del widget, con el instalador incrustado (para copiarlo con un botón)
+const inst = fs.readFileSync(path.join(src, 'instalador-widget.js'), 'utf8');
+const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+fs.writeFileSync(path.join(dist, 'instalador-widget.js'), inst);
+fs.writeFileSync(path.join(dist, 'instalar.html'), fs.readFileSync(path.join(src, 'instalar.html'), 'utf8').replace('{{INSTALADOR}}', () => escHtml(inst.trim())));
 console.log('dist/organizador.html (' + Math.round(out.length / 1024) + ' KB), iconos, manifiesto, service worker y organizador-widget.js (' + Math.round(widget.length / 1024) + ' KB)');
