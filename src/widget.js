@@ -17,18 +17,55 @@ const COL = {
 const COUNTERS = [['responder', 'Correos'], ['esperar', 'Esperas'], ['tarea', 'Tareas'], ['trabajo', 'Trabajos'], ['evento', 'Agenda']];
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// Enlace de compartir de OneDrive → descarga directa del fichero
-function directUrl(u) {
-  u = u.trim();
-  if (/1drv\.ms|onedrive\.live\.com/i.test(u)) {
-    const b64 = Data.fromString(u).toBase64String().replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
-    return 'https://api.onedrive.com/v1.0/shares/u!' + b64 + '/root/content';
+// ---------- Lectura del enlace de OneDrive ----------
+// Se prueban varias formas, en orden, y vale la primera que devuelva el fichero de datos:
+// el enlace tal cual, con download=1, la dirección de descarga que se deduce de la página de OneDrive
+// (redir → download, o la «downloadUrl» que trae la página) y, por último, la API de compartir.
+function withDownload(u) {
+  u = u.replace(/([?&])download=[^&]*&?/i, '$1').replace(/[?&]$/, '');
+  return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'download=1';
+}
+function sharesApi(u) {
+  const b64 = Data.fromString(u).toBase64String().replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+  return 'https://api.onedrive.com/v1.0/shares/u!' + b64 + '/root/content';
+}
+function isData(txt) {
+  try { const d = JSON.parse(txt); return !!d && Array.isArray(d.items); } catch (e) { return false; }
+}
+// Direcciones de descarga que se pueden sacar de la página que devuelve OneDrive
+function fromPage(res) {
+  const out = [];
+  const fin = res.finalUrl || '';
+  if (/onedrive\.live\.com\/(redir|embed|view\.aspx)/i.test(fin)) out.push(fin.replace(/\/(redir|embed|view\.aspx)\b/i, '/download'));
+  if (/sharepoint\.com/i.test(fin) && fin !== res.url) out.push(withDownload(fin));
+  const m = /"(?:@content\.downloadUrl|@microsoft\.graph\.downloadUrl|downloadUrl|FileUrlNoAuth)"\s*:\s*"([^"]+)"/i.exec(res.txt || '');
+  if (m) out.push(m[1].replace(/\\u0026/gi, '&').replace(/\\\//g, '/'));
+  return out;
+}
+async function fetchText(url) {
+  const req = new Request(url);
+  req.timeoutInterval = 20;
+  try {
+    const txt = await req.loadString();
+    const r = req.response || {};
+    return { url, txt, code: r.statusCode || 200, finalUrl: r.url || url };
+  } catch (e) { return { url, txt: '', code: 0, error: e.message }; }
+}
+async function readLink(link) {
+  const queue = [link, withDownload(link)], tried = [], codes = [];
+  while (queue.length && tried.length < 7) {
+    const u = queue.shift();
+    if (tried.indexOf(u) >= 0) continue;
+    tried.push(u);
+    const res = await fetchText(u);
+    if (res.code < 400 && isData(res.txt)) return res.txt;
+    codes.push(res.code);
+    fromPage(res).forEach((x) => { if (tried.indexOf(x) < 0) queue.push(x); });
+    if (!queue.length && /1drv\.ms|onedrive\.live\.com/i.test(link) && tried.indexOf(sharesApi(link)) < 0) queue.push(sharesApi(link));
   }
-  if (/sharepoint\.com/i.test(u)) {
-    u = u.replace(/([?&])download=[^&]*&?/i, '$1').replace(/[?&]$/, '');
-    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'download=1';
-  }
-  return u;
+  if (codes.every((c) => c === 401 || c === 403)) throw new Error('OneDrive pide iniciar sesión (' + codes[0] + '). Comprueba que el enlace sea de «Cualquier persona con el vínculo».');
+  if (codes.every((c) => c === 0)) throw new Error('No hay conexión con OneDrive.');
+  throw new Error('El enlace no da el fichero de datos (respuestas: ' + codes.join(', ') + '). Comprueba que sea el de organizador.json y de «Cualquier persona con el vínculo».');
 }
 
 async function readSource(src) {
@@ -42,14 +79,7 @@ async function readSource(src) {
     if (!txt) throw new Error('No se ha podido leer el fichero del marcador «' + src + '». Ábrelo una vez en la app Archivos para que se descargue.');
     return txt;
   }
-  const req = new Request(directUrl(src));
-  req.timeoutInterval = 20;
-  const txt = await req.loadString();
-  const code = req.response && req.response.statusCode;
-  if (code === 401 || code === 403) throw new Error('OneDrive pide iniciar sesión (' + code + '): el enlace no es de acceso libre. Usa un marcador de archivo de Scriptable en lugar del enlace.');
-  if (code >= 400) throw new Error('OneDrive ha respondido con un error (' + code + '). Revisa el enlace.');
-  if (/^\s*</.test(txt)) throw new Error('El enlace abre una página y no el fichero: compártelo como «Cualquier persona con el vínculo».');
-  return txt;
+  return readLink(src.trim());
 }
 
 // Lee los datos; si falla, usa la última copia buena

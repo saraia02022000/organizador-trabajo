@@ -24,7 +24,14 @@ function makeEnv({ family = 'medium', param = '', response = '', status = 200, k
   const Font = new Proxy({}, { get: (t, name) => (size) => ({ name, size }) });
   class Request {
     constructor(url) { this.url = url; env.requests.push(url); }
-    async loadString() { this.response = { statusCode: status }; if (response instanceof Error) throw response; return response; }
+    // response: texto, Error, o función (url) → texto o { txt, status, finalUrl }
+    async loadString() {
+      let r = typeof response === 'function' ? response(this.url) : response;
+      if (typeof r === 'string' || r instanceof Error) r = { txt: r, status };
+      if (r.txt instanceof Error) throw r.txt;
+      this.response = { statusCode: r.status || 200, url: r.finalUrl || this.url };
+      return r.txt;
+    }
   }
   const store = Object.assign({}, files);
   const fm = {
@@ -101,13 +108,34 @@ async function test(name, fn) {
     assert.strictEqual(t[t.indexOf('HOY') + 2], 'Comité de dirección');
     assert.strictEqual(env.widget.url, 'https://saraia02022000.github.io/organizador-trabajo/');
   });
-  await test('enlace de OneDrive de empresa (SharePoint): se pide la descarga directa', async () => {
+  const PAGE = '<!DOCTYPE html><html><body>OneDrive</body></html>';
+  await test('primero se prueba el enlace tal cual (si da el fichero, no se pide nada más)', async () => {
     const env = await run({ param: SP, response: sample() });
-    assert.strictEqual(env.requests[0], 'https://empresa-my.sharepoint.com/:u:/g/personal/yo/EaBcD?e=xYz&download=1');
+    assert.deepStrictEqual(env.requests, [SP]);
   });
-  await test('enlace de OneDrive personal (1drv.ms): se usa la API de compartir', async () => {
-    const env = await run({ param: 'https://1drv.ms/u/s!AbCdEf', response: sample() });
-    assert.ok(env.requests[0].startsWith('https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBYkNkRWY/root/content'), env.requests[0]);
+  await test('SharePoint: si el enlace da la página, se pide la descarga directa', async () => {
+    const env = await run({ param: SP, response: (u) => /download=1/.test(u) ? sample() : PAGE });
+    assert.deepStrictEqual(env.requests, [SP, 'https://empresa-my.sharepoint.com/:u:/g/personal/yo/EaBcD?e=xYz&download=1']);
+    assert.ok(texts(env.widget).includes('Comité de dirección'));
+  });
+  await test('OneDrive personal: de la redirección «redir» se pasa a «download», sin la API', async () => {
+    const link = 'https://1drv.ms/u/s!AbCdEf';
+    const fin = 'https://onedrive.live.com/redir?resid=ABC%21123&authkey=%21XYZ';
+    const env = await run({ param: link, response: (u) => /\/download\?/.test(u) ? sample() : { txt: PAGE, finalUrl: fin } });
+    assert.strictEqual(env.requests[env.requests.length - 1], 'https://onedrive.live.com/download?resid=ABC%21123&authkey=%21XYZ');
+    assert.ok(!env.requests.some((u) => /api\.onedrive\.com/.test(u)));
+    assert.ok(texts(env.widget).includes('Comité de dirección'));
+  });
+  await test('si la página de OneDrive trae la dirección de descarga, se usa', async () => {
+    const dl = 'https://public.sn.files.1drv.com/y4mAbC/organizador.json?download&psid=1';
+    const page = '<html><script>var $Config={"@content.downloadUrl":"' + dl.replace(/&/g, '\\u0026') + '"}</script></html>';
+    const env = await run({ param: 'https://1drv.ms/u/c/abc/EfGh', response: (u) => u === dl ? sample() : page });
+    assert.ok(env.requests.includes(dl), env.requests.join('\n'));
+    assert.ok(texts(env.widget).includes('Comité de dirección'));
+  });
+  await test('como último recurso, la API de compartir de OneDrive', async () => {
+    const env = await run({ param: 'https://1drv.ms/u/s!AbCdEf', response: (u) => /api\.onedrive\.com/.test(u) ? sample() : PAGE });
+    assert.strictEqual(env.requests[env.requests.length - 1], 'https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBYkNkRWY/root/content');
   });
   await test('el enlace guardado en el llavero sirve si no hay parámetro', async () => {
     const env = await run({ keychain: { 'organizador-url': SP }, response: sample() });
@@ -136,9 +164,9 @@ async function test(name, fn) {
   });
   await test('error de OneDrive y falta de enlace', async () => {
     let t = texts((await run({ param: SP, response: 'x', status: 401 })).widget);
-    assert.ok(t.some((x) => /pide iniciar sesión \(401\).*marcador de archivo/.test(x)), t.join(' | '));
+    assert.ok(t.some((x) => /pide iniciar sesión \(401\)/.test(x)), t.join(' | '));
     t = texts((await run({ param: SP, response: 'x', status: 404 })).widget);
-    assert.ok(t.some((x) => /error \(404\)/.test(x)));
+    assert.ok(t.some((x) => /respuestas: 404/.test(x)), t.join(' | '));
     t = texts((await run({})).widget);
     assert.ok(t.some((x) => /Abre este script en Scriptable/.test(x)));
   });
@@ -148,7 +176,7 @@ async function test(name, fn) {
     const withLink = CODE.replace("const ENLACE = '';", "const ENLACE = '" + SP + "';");
     const env = makeEnv({ param: 'https://otro.example/x.json', keychain: { 'organizador-url': 'https://llavero.example/y.json' }, response: sample() });
     await vm.runInNewContext('(async () => {\n' + withLink + '\n})()', env.context);
-    assert.strictEqual(env.requests[0], 'https://empresa-my.sharepoint.com/:u:/g/personal/yo/EaBcD?e=xYz&download=1');
+    assert.strictEqual(env.requests[0], SP);
     assert.ok(texts(env.widget).includes('Comité de dirección'));
     assert.strictEqual(CODE, saved);
   });
