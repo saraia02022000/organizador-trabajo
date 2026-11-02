@@ -390,13 +390,19 @@ function directUrl(u) {
 async function readSource(src) {
   if (!/^https?:\/\//i.test(src)) {
     const fm = FileManager.local();
-    if (!fm.bookmarkExists(src)) throw new Error('No hay ningún marcador de archivo llamado «' + src + '».');
-    return fm.readString(fm.bookmarkedPath(src));
+    if (!fm.bookmarkExists(src)) throw new Error('No hay ningún marcador de archivo llamado «' + src + '» (Scriptable → Ajustes → Marcadores de archivo).');
+    const p = fm.bookmarkedPath(src);
+    // Si iOS solo tiene el fichero «en la nube», se pide que lo descargue (si no se puede, se intenta leer igual)
+    try { await fm.downloadFileFromiCloud(p); } catch (e) { /* no es de iCloud */ }
+    const txt = fm.readString(p);
+    if (!txt) throw new Error('No se ha podido leer el fichero del marcador «' + src + '». Ábrelo una vez en la app Archivos para que se descargue.');
+    return txt;
   }
   const req = new Request(directUrl(src));
   req.timeoutInterval = 20;
   const txt = await req.loadString();
   const code = req.response && req.response.statusCode;
+  if (code === 401 || code === 403) throw new Error('OneDrive pide iniciar sesión (' + code + '): el enlace no es de acceso libre. Usa un marcador de archivo de Scriptable en lugar del enlace.');
   if (code >= 400) throw new Error('OneDrive ha respondido con un error (' + code + '). Revisa el enlace.');
   if (/^\s*</.test(txt)) throw new Error('El enlace abre una página y no el fichero: compártelo como «Cualquier persona con el vínculo».');
   return txt;

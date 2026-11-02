@@ -30,7 +30,9 @@ function makeEnv({ family = 'medium', param = '', response = '', status = 200, k
   const fm = {
     cacheDirectory: () => '/cache', joinPath: (a, b) => a + '/' + b,
     writeString: (p, s) => { store[p] = s; }, readString: (p) => store[p], fileExists: (p) => p in store,
-    modificationDate: () => new Date(2026, 10, 2, 8, 15), bookmarkExists: (n) => ('bm:' + n) in store, bookmarkedPath: (n) => 'bm:' + n
+    modificationDate: () => new Date(2026, 10, 2, 8, 15), bookmarkExists: (n) => ('bm:' + n) in store, bookmarkedPath: (n) => 'bm:' + n,
+    // Como en Scriptable con un fichero que no es de iCloud: falla y hay que leerlo igual
+    downloadFileFromiCloud: async () => { throw new Error('not iCloud'); }
   };
   const kc = Object.assign({}, keychain);
   env.store = store;
@@ -133,8 +135,10 @@ async function test(name, fn) {
     assert.ok(t.includes('Sin actualizar · datos de las 08:15'));
   });
   await test('error de OneDrive y falta de enlace', async () => {
-    let t = texts((await run({ param: SP, response: 'x', status: 403 })).widget);
-    assert.ok(t.some((x) => /error \(403\)/.test(x)));
+    let t = texts((await run({ param: SP, response: 'x', status: 401 })).widget);
+    assert.ok(t.some((x) => /pide iniciar sesión \(401\).*marcador de archivo/.test(x)), t.join(' | '));
+    t = texts((await run({ param: SP, response: 'x', status: 404 })).widget);
+    assert.ok(t.some((x) => /error \(404\)/.test(x)));
     t = texts((await run({})).widget);
     assert.ok(t.some((x) => /Abre este script en Scriptable/.test(x)));
   });
