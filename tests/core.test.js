@@ -95,6 +95,89 @@ test('búsqueda sin acentos ni mayúsculas', () => {
   assert.ok(!Org.matches(it, 'urbanismo'));
 });
 
+console.log('Repetición');
+const ev = (start, repeat, extra) => Org.makeItem('evento', Object.assign({ title: 'R', start, repeat }, extra));
+const occ = (it, a, b) => Org.occurrences(it, a, b);
+test('cada semana el lunes y el miércoles, cada dos semanas', () => {
+  const it = ev('2026-11-02T10:00', { freq: 'weekly', interval: 1, days: [1, 3] }); // lunes
+  assert.deepStrictEqual(occ(it, '2026-11-01', '2026-11-15'), ['2026-11-02', '2026-11-04', '2026-11-09', '2026-11-11']);
+  it.repeat.interval = 2;
+  assert.deepStrictEqual(occ(it, '2026-11-01', '2026-11-22'), ['2026-11-02', '2026-11-04', '2026-11-16', '2026-11-18']);
+  assert.strictEqual(Org.describeRepeat(it), 'Cada 2 semanas el lunes y el miércoles');
+});
+test('sin días elegidos, cada semana el día de la semana del inicio', () => {
+  const it = ev('2026-11-05T09:00', { freq: 'weekly', interval: 1, days: [] }); // jueves
+  assert.deepStrictEqual(occ(it, '2026-11-01', '2026-11-20'), ['2026-11-05', '2026-11-12', '2026-11-19']);
+});
+test('cada día, cada 3 días y cada día laborable', () => {
+  assert.strictEqual(occ(ev('2026-11-02', { freq: 'daily', interval: 1 }), '2026-11-01', '2026-11-08').length, 7);
+  assert.deepStrictEqual(occ(ev('2026-11-02', { freq: 'daily', interval: 3 }), '2026-11-01', '2026-11-10'), ['2026-11-02', '2026-11-05', '2026-11-08']);
+  assert.deepStrictEqual(occ(ev('2026-11-05', { freq: 'weekdays' }), '2026-11-05', '2026-11-10'), ['2026-11-05', '2026-11-06', '2026-11-09', '2026-11-10']);
+});
+test('cada mes: el mismo día (el 31 cae en el último día), el segundo martes y el último viernes', () => {
+  const d31 = ev('2026-01-31', { freq: 'monthly', interval: 1, monthly: 'day' });
+  assert.deepStrictEqual(occ(d31, '2026-01-01', '2026-04-30'), ['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30']);
+  const nth = ev('2026-11-10T09:30', { freq: 'monthly', interval: 1, monthly: 'nth' }); // segundo martes
+  assert.deepStrictEqual(occ(nth, '2026-11-01', '2027-01-31'), ['2026-11-10', '2026-12-08', '2027-01-12']);
+  assert.strictEqual(Org.describeRepeat(nth), 'Cada mes el segundo martes');
+  const last = ev('2026-11-27', { freq: 'monthly', interval: 1, monthly: 'last' }); // último viernes
+  assert.deepStrictEqual(occ(last, '2026-11-01', '2027-01-31'), ['2026-11-27', '2026-12-25', '2027-01-29']);
+  assert.strictEqual(Org.describeRepeat(last), 'Cada mes el último viernes');
+});
+test('cada año y fecha de fin', () => {
+  const y = ev('2026-03-03', { freq: 'yearly', interval: 1, until: '2028-12-31' });
+  assert.deepStrictEqual(occ(y, '2026-01-01', '2030-12-31'), ['2026-03-03', '2027-03-03', '2028-03-03']);
+  assert.strictEqual(Org.describeRepeat(y), 'Cada año el 3 de marzo, hasta el 31 dic 2028');
+  assert.strictEqual(Org.nextOccurrence(y, '2028-03-03'), '');
+});
+test('la agenda muestra cada repetición con su fecha y hora, y los días quitados no', () => {
+  const d = Org.emptyData();
+  const it = ev('2026-11-02T10:00', { freq: 'weekly', interval: 1, days: [1], skip: ['2026-11-09'] }, { end: '2026-11-02T11:00' });
+  d.items.push(it);
+  const a = Org.agenda(d, '2026-11-01', '2026-11-30');
+  assert.deepStrictEqual(Object.keys(a).sort(), ['2026-11-02', '2026-11-16', '2026-11-23', '2026-11-30']);
+  const o = a['2026-11-16'][0];
+  assert.strictEqual(o.start, '2026-11-16T10:00'); assert.strictEqual(o.end, '2026-11-16T11:00');
+  assert.strictEqual(o.id, it.id); assert.strictEqual(o._occ, '2026-11-16');
+  assert.strictEqual(it.start, '2026-11-02T10:00'); // la serie no cambia
+});
+test('una cita de varios días que se repite ocupa cada día de cada repetición', () => {
+  const d = Org.emptyData();
+  d.items.push(ev('2026-11-02', { freq: 'weekly', interval: 1 }, { end: '2026-11-03' }));
+  assert.deepStrictEqual(Object.keys(Org.agenda(d, '2026-11-03', '2026-11-10')).sort(), ['2026-11-03', '2026-11-09', '2026-11-10']);
+});
+test('«Hoy» incluye las repeticiones de hoy y de la semana', () => {
+  const d = Org.emptyData();
+  d.items.push(ev('2026-10-05T09:00', { freq: 'weekly', interval: 1 }, { title: 'Comité' })); // lunes
+  const s = Org.summary(d, '2026-11-02');
+  assert.deepStrictEqual(s.hoy.map(i => i.start), ['2026-11-02T09:00']);
+  assert.deepStrictEqual(s.semana.map(i => i.start), ['2026-11-09T09:00']);
+  assert.strictEqual(s.counts.evento, 1);
+  d.items[0].repeat.until = '2026-10-31';
+  assert.strictEqual(Org.summary(d, '2026-11-02').counts.evento, 0);
+});
+test('una tarea que se repite pasa a la próxima fecha al completarla', () => {
+  const t = Org.makeItem('tarea', { title: 'Informe mensual', due: '2026-11-30', repeat: { freq: 'monthly', interval: 1, monthly: 'day', anchor: '2026-10-31' } });
+  Org.setDone(t, true, '2026-11-28');
+  assert.strictEqual(t.status, 'abierto'); assert.strictEqual(t.due, '2026-12-31'); assert.ok(t.lastDone);
+  // atrasada: salta a la primera fecha desde hoy
+  const w = Org.makeItem('tarea', { title: 'Copia de seguridad', due: '2026-10-05', repeat: { freq: 'weekly', interval: 1, anchor: '2026-10-05' } });
+  Org.setDone(w, true, '2026-11-04');
+  assert.strictEqual(w.due, '2026-11-09');
+  // al acabar la serie, se cierra
+  const u = Org.makeItem('tarea', { title: 'x', due: '2026-11-02', repeat: { freq: 'daily', interval: 1, until: '2026-11-02' } });
+  Org.setDone(u, true, '2026-11-02');
+  assert.strictEqual(u.status, 'hecho');
+});
+test('en la agenda, una tarea que se repite muestra la actual y las próximas', () => {
+  const d = Org.emptyData();
+  d.items.push(Org.makeItem('tarea', { title: 'Revisar', due: '2026-11-04', repeat: { freq: 'weekly', interval: 1, anchor: '2026-11-04' } }));
+  const a = Org.agenda(d, '2026-11-01', '2026-11-20');
+  assert.deepStrictEqual(Object.keys(a).sort(), ['2026-11-04', '2026-11-11', '2026-11-18']);
+  assert.strictEqual(a['2026-11-04'][0]._future, false);
+  assert.strictEqual(a['2026-11-11'][0]._future, true);
+});
+
 console.log('Combinar versiones (iPhone y PC)');
 function clone(x) { return JSON.parse(JSON.stringify(x)); }
 const stampAt = s => '2026-10-31T' + s + ':00.000Z';

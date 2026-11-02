@@ -62,7 +62,8 @@
   };
   var DEFAULTS = {
     title: '', notes: '', status: 'abierto', priority: 'normal', due: '', person: '', work: '',
-    email: null, since: '', evType: 'reunion', start: '', end: '', place: '', log: null, doneAt: ''
+    email: null, since: '', evType: 'reunion', start: '', end: '', place: '', log: null, doneAt: '',
+    repeat: null, lastDone: ''
   };
   Org.makeItem = function (kind, fields) {
     if (!Org.KINDS[kind]) throw new Error('Tipo desconocido: ' + kind);
@@ -115,7 +116,14 @@
     return key(a) === key(b);
   };
   Org.touch = function (it) { it.updated = new Date().toISOString(); return it; };
-  Org.setDone = function (it, done) {
+  // Una tarea que se repite no se cierra: pasa a su próxima fecha (si ya pasó, a la primera desde hoy)
+  Org.setDone = function (it, done, today) {
+    today = today || Org.today();
+    if (done && it.repeat && it.kind !== 'evento' && it.due) {
+      var next = Org.nextOccurrence(it, it.due);
+      if (next && next < today) next = Org.nextOccurrence(it, Org.addDays(today, -1));
+      if (next) { it.due = next; it.lastDone = new Date().toISOString(); it.status = 'abierto'; it.doneAt = ''; return Org.touch(it); }
+    }
     it.status = done ? 'hecho' : 'abierto';
     it.doneAt = done ? new Date().toISOString() : '';
     return Org.touch(it);
@@ -135,6 +143,78 @@
     var s = Org.itemDate(it);
     if (it.kind === 'evento' && it.end && it.end.slice(0, 10) > s) return it.end.slice(0, 10);
     return s;
+  };
+
+  // ---------- Repetición ----------
+  // repeat: { freq: 'daily'|'weekdays'|'weekly'|'monthly'|'yearly', interval, days: [0-6, 0 = domingo] (semanal),
+  //           monthly: 'day'|'nth'|'last', until: 'AAAA-MM-DD'|'', skip: [fechas quitadas], anchor (tareas) }
+  // El patrón se mide desde la fecha de inicio de la cita; en las tareas, desde `anchor` (la fecha con la
+  // que se creó la regla), porque su `due` avanza al completarlas.
+  Org.FREQS = { daily: 'Cada día', weekdays: 'Cada día laborable (lunes a viernes)', weekly: 'Cada semana', monthly: 'Cada mes', yearly: 'Cada año' };
+  function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
+  function anchorOf(it) { return (it.kind !== 'evento' && it.repeat && it.repeat.anchor) || Org.itemDate(it); }
+  Org.nthOf = function (s) { return Math.ceil(Org.parseYmd(s).getDate() / 7); };
+  Org.occursOn = function (it, s) {
+    var r = it.repeat, a = anchorOf(it);
+    if (!r || !a || s < a || (r.until && s > r.until) || (r.skip && r.skip.indexOf(s) >= 0)) return false;
+    var A = Org.parseYmd(a), D = Org.parseYmd(s), n = Math.max(1, +r.interval || 1);
+    var months = (D.getFullYear() - A.getFullYear()) * 12 + D.getMonth() - A.getMonth();
+    switch (r.freq) {
+      case 'daily': return Org.diffDays(a, s) % n === 0;
+      case 'weekdays': return D.getDay() >= 1 && D.getDay() <= 5;
+      case 'weekly':
+        var days = r.days && r.days.length ? r.days : [A.getDay()];
+        return days.indexOf(D.getDay()) >= 0 && (Org.diffDays(Org.weekStart(a), Org.weekStart(s)) / 7) % n === 0;
+      case 'monthly':
+        if (months % n) return false;
+        if (r.monthly === 'nth') return D.getDay() === A.getDay() && Org.nthOf(s) === Org.nthOf(a);
+        if (r.monthly === 'last') return D.getDay() === A.getDay() && D.getDate() + 7 > daysInMonth(D);
+        return D.getDate() === Math.min(A.getDate(), daysInMonth(D));
+      case 'yearly':
+        return months % (12 * n) === 0 && D.getDate() === Math.min(A.getDate(), daysInMonth(D));
+    }
+    return false;
+  };
+  // Fechas de inicio de las repeticiones en [from, to], a partir de la fecha actual del elemento
+  Org.occurrences = function (it, from, to) {
+    var out = [], s = Org.itemDate(it); if (!s) return out;
+    for (var d = from > s ? from : s, g = 0; d <= to && g < 3700; g++, d = Org.addDays(d, 1)) if (Org.occursOn(it, d)) out.push(d);
+    return out;
+  };
+  Org.nextOccurrence = function (it, after) {
+    for (var d = Org.addDays(after, 1), g = 0; g < 3700; g++, d = Org.addDays(d, 1)) {
+      if (it.repeat.until && d > it.repeat.until) return '';
+      if (Org.occursOn(it, d)) return d;
+    }
+    return '';
+  };
+  // Una repetición concreta: el mismo elemento con las fechas de ese día (`_occ`)
+  Org.occurrence = function (it, d) {
+    var o = Object.create(it); o._occ = d;
+    if (it.kind === 'evento') {
+      var s = Org.itemDate(it), span = Org.diffDays(s, Org.itemEndDate(it));
+      o.start = d + it.start.slice(10);
+      o.end = it.end ? Org.addDays(d, it.end.slice(0, 10) > s ? span : 0) + it.end.slice(10) : '';
+    } else {
+      o.due = d; o._future = d !== it.due;
+    }
+    return o;
+  };
+  var ORD = ['', 'primer', 'segundo', 'tercer', 'cuarto', 'quinto'];
+  Org.describeRepeat = function (it) {
+    var r = it.repeat; if (!r) return '';
+    var a = anchorOf(it), A = Org.parseYmd(a) || new Date(), n = Math.max(1, +r.interval || 1), t;
+    var unit = { daily: ['día', 'días'], weekly: ['semana', 'semanas'], monthly: ['mes', 'meses'], yearly: ['año', 'años'] }[r.freq];
+    t = r.freq === 'weekdays' ? 'Cada día laborable' : n === 1 ? 'Cada ' + unit[0] : 'Cada ' + n + ' ' + unit[1];
+    if (r.freq === 'weekly') {
+      var ds = (r.days && r.days.length ? r.days : [A.getDay()]).slice().sort(function (x, y) { return ((x + 6) % 7) - ((y + 6) % 7); });
+      var names = ds.map(function (x) { return DIAS[x]; });
+      t += ' el ' + (names.length > 1 ? names.slice(0, -1).join(', ') + ' y el ' + names[names.length - 1] : names[0]);
+    } else if (r.freq === 'monthly') {
+      t += r.monthly === 'nth' ? ' el ' + ORD[Org.nthOf(a)] + ' ' + DIAS[A.getDay()] : r.monthly === 'last' ? ' el último ' + DIAS[A.getDay()] : ' el día ' + A.getDate();
+    } else if (r.freq === 'yearly') t += ' el ' + A.getDate() + ' de ' + MESES[A.getMonth()];
+    if (r.until) t += ', hasta el ' + Org.fmtDate(r.until, { year: true });
+    return t;
   };
 
   Org.compare = function (a, b) {
@@ -173,6 +253,14 @@
     for (var k in Org.KINDS) r.counts[k] = 0;
     data.items.forEach(function (it) {
       if (it.kind !== 'evento' && !Org.isOpen(it)) return;
+      // Cita que se repite: sus repeticiones de hoy y de los próximos 7 días
+      if (it.kind === 'evento' && it.repeat) {
+        var span = Org.diffDays(Org.itemDate(it), Org.itemEndDate(it));
+        var occ = Org.occurrences(it, Org.addDays(today, -span), Org.addDays(today, 7));
+        if (occ.length || Org.nextOccurrence(it, Org.addDays(today, -1))) r.counts.evento++;
+        occ.forEach(function (d) { var o = Org.occurrence(it, d), ob = Org.bucket(o, today); if (r[ob]) r[ob].push(o); });
+        return;
+      }
       var b = Org.bucket(it, today);
       if (it.kind === 'trabajo') { r.counts.trabajo++; if (b !== 'sinfecha' && r[b]) r[b].push(it); return; }
       if (it.kind !== 'evento') r.counts[it.kind]++;
@@ -191,12 +279,14 @@
       if (it.kind === 'trabajo' && !it.due) return;
       if (it.kind !== 'evento' && !Org.isOpen(it)) return;
       var s = Org.itemDate(it); if (!s) return;
-      var e = Org.itemEndDate(it);
-      var d = s < from ? from : s;
-      for (var guard = 0; d <= e && d <= to && guard < 400; guard++) {
-        (days[d] = days[d] || []).push(it);
-        d = Org.addDays(d, 1);
-      }
+      var span = Org.diffDays(s, Org.itemEndDate(it));
+      // Lo que se repite aparece cada vez; en las tareas, la actual y las próximas
+      var starts = it.repeat ? Org.occurrences(it, Org.addDays(from, -span), to) : [s];
+      starts.forEach(function (st) {
+        var o = it.repeat ? Org.occurrence(it, st) : it, e = Org.addDays(st, span);
+        for (var d = st < from ? from : st, guard = 0; d <= e && d <= to && guard < 400; guard++, d = Org.addDays(d, 1))
+          (days[d] = days[d] || []).push(o);
+      });
     });
     for (var k in days) days[k].sort(Org.compare);
     return days;

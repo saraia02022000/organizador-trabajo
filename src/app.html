@@ -90,6 +90,7 @@ h2 .late { color: var(--late); }
 .row .main { flex: 1; min-width: 0; }
 .row .t { font-weight: 550; overflow-wrap: anywhere; }
 .row.done .t { text-decoration: line-through; color: var(--muted); }
+.row.future { opacity: .7; }
 .row .s { font-size: 13px; color: var(--muted); display: flex; gap: 6px 12px; flex-wrap: wrap; margin-top: 2px; }
 .tag { font-size: 12px; border-radius: 6px; padding: 0 6px; background: var(--soft); color: var(--muted); }
 .tag.k { color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); font-weight: 600; }
@@ -481,9 +482,12 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     if (it.kind === 'esperar' && it.since) sub.push('pedido ' + esc(Org.relDate(it.since, today)));
     if (it.kind === 'evento' && it.place) sub.push(esc(it.place));
     if (it.work && !opts.noWork) sub.push('<span class="tag">' + esc(workTitle(it.work)) + '</span>');
+    if (it.repeat) sub.push('<span title="Se repite">↻ ' + esc(Org.describeRepeat(it)) + '</span>');
     if (it.email) sub.push('<span title="Creado desde un correo">✉</span>');
-    var chk = it.kind === 'evento' ? '' : '<input type="checkbox" class="chk" data-done="' + it.id + '"' + (Org.isOpen(it) ? '' : ' checked') + ' title="Marcar como hecho">';
-    return '<div class="row' + (Org.isOpen(it) ? '' : ' done') + '" data-edit="' + it.id + '" style="--c:' + KC(it.kind) + '">' +
+    // Las próximas veces de una tarea que se repite solo se ven: se marca como hecha la actual
+    var chk = it.kind === 'evento' || it._future ? '' : '<input type="checkbox" class="chk" data-done="' + it.id + '"' + (Org.isOpen(it) ? '' : ' checked') + ' title="Marcar como hecho">';
+    return '<div class="row' + (Org.isOpen(it) ? '' : ' done') + (it._future ? ' future' : '') + '" data-edit="' + it.id + '"' +
+      (it._occ ? ' data-occ="' + it._occ + '"' : '') + ' style="--c:' + KC(it.kind) + '">' +
       '<span class="kind"></span>' + chk + '<div class="main"><div class="t">' + esc(it.title || '(sin título)') + '</div>' +
       (sub.length ? '<div class="s">' + sub.map(function (s) { return '<span>' + s + '</span>'; }).join('') + '</div>' : '') + '</div>' + whenOf(it, today) + '</div>';
   }
@@ -601,16 +605,46 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
   // ---------- Edición ----------
   var DATE_LABEL = { responder: 'Contestar antes del', esperar: 'Reclamar el', tarea: 'Fecha límite', trabajo: 'Fecha límite' };
   var PERSON_LABEL = { responder: 'Remitente', esperar: 'De quién', tarea: 'Para quién', trabajo: 'Interesado o responsable' };
-  function editItem(id, preset, after) {
+  var UNITS = { daily: 'días', weekly: 'semanas', monthly: 'meses', yearly: 'años' };
+  // Campos de repetición de citas y tareas
+  function repeatFields(v) {
+    var r = v.repeat || {}, f = v.repeat ? r.freq : '';
+    var a = (v.kind === 'evento' ? (v.start || '').slice(0, 10) : v.due) || Org.today(), A = Org.parseYmd(a);
+    var h = '<label' + (f ? '' : ' class="full"') + '>Repetir<select name="repFreq"><option value="">No se repite</option>' + Object.keys(Org.FREQS).map(function (x) {
+      return '<option value="' + x + '"' + (f === x ? ' selected' : '') + '>' + Org.FREQS[x] + '</option>';
+    }).join('') + '</select></label>';
+    if (!f) return h;
+    h += '<label>Hasta (opcional)<input name="repUntil" type="date" value="' + esc(r.until || '') + '"></label>';
+    if (f !== 'weekdays') h += '<label>Cada<span style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input name="repInterval" type="number" min="1" max="99" value="' + (r.interval || 1) + '" style="width:5.5em"> ' + UNITS[f] + '</span></label>';
+    if (f === 'weekly') {
+      var days = r.days && r.days.length ? r.days : [A.getDay()];
+      h += '<div class="full"><div class="hint" style="margin-bottom:3px">Qué días</div><div class="kinds" style="--c:var(--accent);margin:0">' + [1, 2, 3, 4, 5, 6, 0].map(function (d) {
+        return '<label><input type="checkbox" name="repDay" value="' + d + '"' + (days.indexOf(d) >= 0 ? ' checked' : '') + '>' + Org.DIAS[d].slice(0, 3) + '</label>';
+      }).join('') + '</div></div>';
+    } else if (f === 'monthly') {
+      var dn = Org.DIAS[A.getDay()], nth = Org.nthOf(a), m = r.monthly || 'day';
+      h += '<label>Qué día del mes<select name="repMonthly"><option value="day"' + (m === 'day' ? ' selected' : '') + '>El día ' + A.getDate() + '</option>' +
+        (nth <= 4 ? '<option value="nth"' + (m === 'nth' ? ' selected' : '') + '>El ' + ['', 'primer', 'segundo', 'tercer', 'cuarto'][nth] + ' ' + dn + '</option>' : '') +
+        '<option value="last"' + (m === 'last' ? ' selected' : '') + '>El último ' + dn + '</option></select></label>';
+    }
+    return h + '<div class="full hint">↻ ' + esc(Org.describeRepeat(v)) + '</div>';
+  }
+  // occ: fecha de la repetición desde la que se abre una cita que se repite
+  function editItem(id, preset, after, occ) {
     var it = id ? S.data.items.find(function (x) { return x.id === id; }) : null;
     var v = it ? JSON.parse(JSON.stringify(it)) : Org.makeItem((preset && preset.kind) || 'tarea', preset);
     if (preset && preset.kind) v.kind = preset.kind;
+    var series = it && it.kind === 'evento' && it.repeat && occ ? occ : '';
+    if (series) { var oc = Org.occurrence(it, occ); v.start = oc.start; v.end = oc.end; }
+    var origDue = it ? it.due : '';
     var frm = $('#frm'), dlg = $('#dlg');
     function draw() {
       var k = v.kind, allDay = k === 'evento' && v.start && v.start.length === 10;
       var works = Org.works(S.data).filter(function (w) { return w.id !== v.id; });
       if (v.work && !works.some(function (w) { return w.id === v.work; })) { var cw = S.data.items.find(function (x) { return x.id === v.work; }); if (cw) works.push(cw); }
-      var h = '<h3>' + (it ? 'Editar' : 'Nuevo') + '</h3><div class="kinds">' + Object.keys(Org.KINDS).map(function (kk) {
+      var h = '<h3>' + (it ? 'Editar' : 'Nuevo') + '</h3>' +
+        (series ? '<p class="hint" style="margin:-6px 0 10px">Es la repetición del ' + esc(Org.fmtDate(series, { weekday: true, year: true })) + '. Puedes cambiar solo este día o toda la serie.</p>' : '') +
+        '<div class="kinds">' + Object.keys(Org.KINDS).map(function (kk) {
         return '<label style="--c:' + KC(kk) + '"><input type="radio" name="kind" value="' + kk + '"' + (kk === k ? ' checked' : '') + '>' + Org.KINDS[kk] + '</label>';
       }).join('') + '</div>';
       if (v.email) {
@@ -629,18 +663,23 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
           '<label class="check full"><input type="checkbox" name="allDay"' + (allDay ? ' checked' : '') + '> Todo el día</label>' +
           '<label>Empieza<input name="start" type="' + (allDay ? 'date' : 'datetime-local') + '" required value="' + esc(allDay ? v.start : (v.start.length === 10 ? v.start + 'T09:00' : v.start)) + '"></label>' +
           '<label>Termina<input name="end" type="' + (allDay ? 'date' : 'datetime-local') + '" value="' + esc(allDay ? (v.end || '').slice(0, 10) : (v.end && v.end.length === 10 ? v.end + 'T10:00' : v.end)) + '"></label>';
+        h += repeatFields(v);
       } else {
         h += '<label>' + PERSON_LABEL[k] + '<input name="person" value="' + esc(v.person) + '"></label>' +
-          '<label>' + DATE_LABEL[k] + '<input name="due" type="date" value="' + esc(v.due) + '"></label>';
+          '<label>' + (k === 'tarea' && v.repeat ? 'Próxima vez' : DATE_LABEL[k]) + '<input name="due" type="date" value="' + esc(v.due) + '"></label>';
         if (k === 'esperar') h += '<label>Pedido el<input name="since" type="date" value="' + esc(v.since) + '"></label>';
         h += '<label>Prioridad<select name="priority">' + Object.keys(Org.PRIORITIES).map(function (p) { return '<option value="' + p + '"' + (v.priority === p ? ' selected' : '') + '>' + Org.PRIORITIES[p] + '</option>'; }).join('') + '</select></label>';
+        if (k === 'tarea') h += repeatFields(v);
       }
       if (k !== 'trabajo') h += '<label' + (k === 'esperar' ? '' : ' class="full"') + '>Trabajo<select name="work"><option value="">Ninguno</option>' + works.map(function (w) {
         return '<option value="' + w.id + '"' + (v.work === w.id ? ' selected' : '') + '>' + esc(w.title) + '</option>';
       }).join('') + '</select></label>';
       h += '<label class="full">Notas<textarea name="notes">' + esc(v.notes) + '</textarea></label>';
-      if (it && k !== 'evento') h += '<label class="check full"><input type="checkbox" name="done"' + (Org.isOpen(v) ? '' : ' checked') + '> ' + (k === 'trabajo' ? 'Trabajo cerrado' : k === 'esperar' ? 'Ya ha llegado' : k === 'responder' ? 'Contestado' : 'Hecho') + '</label>';
-      h += '</div><div class="actions">' + (it ? '<button type="button" class="btn danger" data-del>Eliminar</button>' : '') +
+      if (it && k !== 'evento') h += '<label class="check full"><input type="checkbox" name="done"' + (Org.isOpen(v) ? '' : ' checked') + '> ' +
+        (k === 'trabajo' ? 'Trabajo cerrado' : k === 'esperar' ? 'Ya ha llegado' : k === 'responder' ? 'Contestado' : v.repeat ? 'Hecho (pasa a la próxima vez)' : 'Hecho') + '</label>';
+      if (series) h += '</div><div class="actions"><button type="button" class="btn danger" data-delocc>Eliminar este día</button><button type="button" class="btn danger" data-del>Eliminar la serie</button>' +
+        '<span class="grow"></span><button type="button" class="btn" data-cancel>Cancelar</button><button type="button" class="btn" data-saveocc>Guardar solo este día</button><button class="btn primary" value="ok">Guardar toda la serie</button></div>';
+      else h += '</div><div class="actions">' + (it ? '<button type="button" class="btn danger" data-del>Eliminar</button>' : '') +
         (it && k === 'responder' && Org.isOpen(v) ? '<button type="button" class="btn" data-reply title="Lo marca como contestado y crea una espera de respuesta">Contestado, espero respuesta</button>' : '') +
         '<span class="grow"></span><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn primary" value="ok">Guardar</button></div>';
       frm.innerHTML = h;
@@ -656,6 +695,21 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
         if (k === 'esperar') v.since = fd.get('since') || '';
       }
       if (k !== 'trabajo') v.work = fd.get('work') || '';
+      if (k === 'evento' || k === 'tarea') {
+        var f = fd.get('repFreq'), old = v.repeat || {};
+        if (!f) v.repeat = null;
+        else {
+          // Si se acaba de elegir la frecuencia, sus campos aún no están en el formulario: se conservan los anteriores
+          var rr = {
+            freq: f, interval: Math.max(1, Math.min(99, parseInt(fd.get('repInterval'), 10) || old.interval || 1)),
+            days: f === 'weekly' && frm.querySelector('[name=repDay]') ? fd.getAll('repDay').map(Number) : (old.days || []),
+            monthly: fd.get('repMonthly') || old.monthly || 'day',
+            until: fd.get('repUntil') !== null ? fd.get('repUntil') : (old.until || ''), skip: old.skip || []
+          };
+          if (k === 'tarea') { if (!v.due) v.due = Org.today(); rr.anchor = old.anchor && v.due === origDue ? old.anchor : v.due; }
+          v.repeat = rr;
+        }
+      } else v.repeat = null;
       if (it && k !== 'evento') { var done = !!fd.get('done'); if (done !== !Org.isOpen(v)) Org.setDone(v, done); }
     }
     draw();
@@ -670,12 +724,25 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       } else if (e.target.name === 'allDay') {
         read(); v.start = e.target.checked ? v.start.slice(0, 10) : (v.start.slice(0, 10) || Org.today()) + 'T09:00';
         v.end = e.target.checked ? (v.end || '').slice(0, 10) : (v.end ? v.end.slice(0, 10) + 'T10:00' : ''); draw();
+      } else if (/^rep(Freq|Monthly|Interval)$/.test(e.target.name) || e.target.name === 'repDay' || (v.repeat && /^(start|due)$/.test(e.target.name))) {
+        read(); draw(); // actualiza los campos y el resumen de la repetición
       }
     };
     frm.onclick = function (e) {
       if (e.target.closest('[data-cancel]')) { dlg.close(); }
       else if (e.target.closest('[data-del]')) {
-        if (confirm('¿Eliminar «' + (it.title || 'sin título') + '»?' + (it.kind === 'trabajo' ? ' Lo vinculado a este trabajo se conserva.' : ''))) { Org.remove(S.data, it.id); dlg.close(); changed(); }
+        if (confirm('¿Eliminar ' + (it.repeat ? 'toda la serie ' : '') + '«' + (it.title || 'sin título') + '»?' + (it.kind === 'trabajo' ? ' Lo vinculado a este trabajo se conserva.' : ''))) { Org.remove(S.data, it.id); dlg.close(); changed(); }
+      } else if (e.target.closest('[data-delocc]')) {
+        it.repeat.skip = (it.repeat.skip || []).concat(series); Org.touch(it);
+        dlg.close(); changed(); toast('Quitada la del ' + Org.fmtDate(series, { weekday: true }));
+      } else if (e.target.closest('[data-saveocc]')) {
+        // Ese día pasa a ser una cita suelta y se quita de la serie
+        read(); if (!v.title) return;
+        var one = Org.makeItem('evento');
+        Object.assign(one, v, { id: one.id, created: one.created, updated: one.updated, repeat: null });
+        S.data.items.push(one);
+        it.repeat.skip = (it.repeat.skip || []).concat(series); Org.touch(it);
+        dlg.close(); changed();
       } else if (e.target.closest('[data-reply]')) {
         read(); Org.setDone(v, true); Object.assign(it, v); Org.touch(it);
         var w = Org.makeItem('esperar', { title: 'Respuesta: ' + v.title, person: v.person, since: Org.today(), work: v.work, email: v.email });
@@ -685,6 +752,14 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     frm.onsubmit = function (e) {
       e.preventDefault(); read();
       if (!v.title) return;
+      // Toda la serie desde una repetición: la serie conserva su fecha de inicio y toma la hora y la duración
+      // (si se abrió la primera, o se deja de repetir, vale la fecha elegida)
+      if (series) {
+        var sd = Org.itemDate(it), od = v.start.slice(0, 10), span = v.end ? Org.diffDays(od, v.end.slice(0, 10)) : 0;
+        var base = !v.repeat || series === sd ? od : sd;
+        v.start = base + v.start.slice(10);
+        if (v.end) v.end = Org.addDays(base, span) + v.end.slice(10);
+      }
       if (it) { Object.assign(it, v); Org.touch(it); } else S.data.items.push(v);
       dlg.close(); changed();
     };
@@ -714,7 +789,8 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
     if (t.matches('[data-done]')) {
       var it = S.data.items.find(function (x) { return x.id === t.dataset.done; });
       Org.setDone(it, t.checked); changed();
-      if (t.checked) toast('«' + it.title + '» ' + (it.kind === 'trabajo' ? 'cerrado' : 'hecho'));
+      if (t.checked && it.repeat && Org.isOpen(it)) toast('Hecho. Próxima vez: ' + Org.fmtDate(it.due, { weekday: true }));
+      else if (t.checked) toast('«' + it.title + '» ' + (it.kind === 'trabajo' ? 'cerrado' : 'hecho'));
       return;
     }
     if (t.matches('[data-showdone]')) { S.showDone[t.dataset.showdone] = t.checked; render(); return; }
@@ -729,7 +805,7 @@ dialog h3 { margin: 0 0 12px; font-size: 18px; }
       if (pre.kind === 'esperar') pre.since = Org.today();
       editItem(null, pre); return;
     }
-    if ((el = t.closest('[data-edit]')) && !t.closest('input, form')) { editItem(el.dataset.edit); return; }
+    if ((el = t.closest('[data-edit]')) && !t.closest('input, form')) { editItem(el.dataset.edit, null, null, el.dataset.occ); return; }
     if ((el = t.closest('[data-toggle]')) && !t.closest('input')) { S.openWork[el.dataset.toggle] = !S.openWork[el.dataset.toggle]; render(); return; }
     if ((el = t.closest('[data-view]'))) { S.view = el.dataset.view; render(); window.scrollTo(0, 0); return; }
     if ((el = t.closest('[data-calmode]'))) { S.calMode = el.dataset.calmode; render(); return; }
