@@ -20,8 +20,10 @@ const cut = core.indexOf('  // ---------- Correos ----------');
 const start = core.indexOf('(function (root) {');
 if (cut < 0 || start < 0) throw new Error('No se encuentra el principio o la sección «Correos» en core.js');
 const widget = '// Variables used by Scriptable.\n// These must be at the very top of the file. Do not edit.\n// icon-color: deep-blue; icon-glyph: calendar-check;\n' +
-  '// Organizador de trabajo · widget para Scriptable (iOS). Generado por build.js: no editar a mano.\n' +
+  '// Organizador de trabajo · widget para Scriptable (iOS). Generado por build.js.\n' +
   '// Se instala y actualiza con el instalador del README.\n\n' +
+  '// Pega aquí, entre las comillas, el enlace de organizador.json en OneDrive:\n' +
+  "const ENLACE = '';\n\n" +
   'const Org = ' + core.slice(start, cut) + '  return Org;\n})(this);\n\n' +
   fs.readFileSync(path.join(src, 'widget.js'), 'utf8');
 fs.writeFileSync(path.join(dist, 'organizador-widget.js'), widget);

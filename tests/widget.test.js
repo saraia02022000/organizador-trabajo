@@ -142,6 +142,16 @@ async function test(name, fn) {
     t = texts((await run({})).widget);
     assert.ok(t.some((x) => /Abre este script en Scriptable/.test(x)));
   });
+  await test('el enlace escrito al principio del código manda sobre el parámetro y el llavero', async () => {
+    assert.ok(CODE.indexOf("const ENLACE = '';") > 0 && CODE.indexOf("const ENLACE = '';") < 600, 'ENLACE debe estar arriba del todo');
+    const saved = CODE;
+    const withLink = CODE.replace("const ENLACE = '';", "const ENLACE = '" + SP + "';");
+    const env = makeEnv({ param: 'https://otro.example/x.json', keychain: { 'organizador-url': 'https://llavero.example/y.json' }, response: sample() });
+    await vm.runInNewContext('(async () => {\n' + withLink + '\n})()', env.context);
+    assert.strictEqual(env.requests[0], 'https://empresa-my.sharepoint.com/:u:/g/personal/yo/EaBcD?e=xYz&download=1');
+    assert.ok(texts(env.widget).includes('Comité de dirección'));
+    assert.strictEqual(CODE, saved);
+  });
   await test('marcador de archivo de Scriptable en lugar de enlace', async () => {
     const env = await run({ param: 'organizador', files: { 'bm:organizador': sample() } });
     assert.strictEqual(env.requests.length, 0);

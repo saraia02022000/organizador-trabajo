@@ -1,8 +1,11 @@
 // Variables used by Scriptable.
 // These must be at the very top of the file. Do not edit.
 // icon-color: deep-blue; icon-glyph: calendar-check;
-// Organizador de trabajo · widget para Scriptable (iOS). Generado por build.js: no editar a mano.
+// Organizador de trabajo · widget para Scriptable (iOS). Generado por build.js.
 // Se instala y actualiza con el instalador del README.
+
+// Pega aquí, entre las comillas, el enlace de organizador.json en OneDrive:
+const ENLACE = '';
 
 const Org = (function (root) {
   'use strict';
@@ -544,9 +547,21 @@ function message(msg) {
 // ---------- Inicio ----------
 async function main() {
   const family = config.widgetFamily;
-  let src = (args.widgetParameter || '').trim();
+  // El enlace escrito al principio del código manda; si está vacío, el parámetro del widget o el llavero
+  const fixed = typeof ENLACE === 'string' ? ENLACE.trim() : '';
+  let src = fixed || (args.widgetParameter || '').trim();
   let preview = 'medium';
-  if (!config.runsInWidget) {
+  if (!config.runsInWidget && fixed) {
+    const a = new Alert();
+    a.title = 'Organizador de trabajo';
+    a.addAction('Vista previa mediana');
+    a.addAction('Vista previa grande');
+    a.addAction('Vista previa pequeña');
+    a.addCancelAction('Cerrar');
+    const i = await a.present();
+    if (i === -1) return;
+    preview = ['medium', 'large', 'small'][i];
+  } else if (!config.runsInWidget) {
     // En la app: elegir vista previa o cambiar el enlace
     if (!Keychain.contains(KEY) && !src) src = await askUrl();
     else {
